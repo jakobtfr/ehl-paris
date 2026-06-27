@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from shapely import affinity
-from shapely.geometry import MultiPolygon, Polygon
+from shapely.geometry import GeometryCollection, MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
@@ -42,6 +42,20 @@ class RoomMRR:
     h: float
     angle: float
     label_idx: int
+
+    def __post_init__(self) -> None:
+        self.cx = float(self.cx)
+        self.cy = float(self.cy)
+        w = max(float(self.w), 0.0)
+        h = max(float(self.h), 0.0)
+        angle = float(self.angle)
+        if h > w:
+            w, h = h, w
+            angle += math.pi / 2.0
+        self.w = w
+        self.h = h
+        self.angle = canonical_angle(angle)
+        self.label_idx = int(round(self.label_idx))
 
     @property
     def label(self) -> str:
@@ -99,6 +113,23 @@ def polygon_to_mrr(poly: Polygon, label_idx: int) -> RoomMRR:
     )
 
 
+def geometry_iou(a: BaseGeometry, b: BaseGeometry) -> float:
+    """Area IoU for two Shapely geometries."""
+
+    union = a.union(b).area
+    if union <= 0:
+        return 0.0
+    return float(a.intersection(b).area / union)
+
+
+def encode_decode_iou(poly: Polygon, label_idx: int = 0) -> float:
+    """IoU between a polygon and its raw MRR encode/decode reconstruction."""
+
+    if poly.is_empty or poly.area <= 0:
+        return 0.0
+    return geometry_iou(poly, polygon_to_mrr(poly, label_idx).to_polygon())
+
+
 def mrrs_to_array(mrrs: list[RoomMRR]) -> np.ndarray:
     """Pack MRRs into an (N, 6) array: cx, cy, w, h, angle, label_idx."""
 
@@ -115,10 +146,10 @@ def array_to_mrrs(arr: np.ndarray) -> list[RoomMRR]:
         RoomMRR(
             cx=float(r[0]),
             cy=float(r[1]),
-            w=max(float(r[2]), 0.0),
-            h=max(float(r[3]), 0.0),
-            angle=canonical_angle(float(r[4])),
-            label_idx=int(round(r[5])),
+            w=float(r[2]),
+            h=float(r[3]),
+            angle=float(r[4]),
+            label_idx=float(r[5]),
         )
         for r in arr
     ]
@@ -159,7 +190,9 @@ def repair_partition(
     clipped_union = unary_union([poly for poly, _ in clipped])
     overlap_frac = max(sum(poly.area for poly, _ in clipped) - clipped_union.area, 0.0) / outline_area
     if reject_large_repairs and overlap_frac > max_overlap_frac:
-        raise RepairRejected(f"overlap repair too large: {overlap_frac:.3f}")
+        raise RepairRejected(
+            f"overlap repair too large: {overlap_frac:.3f} > {max_overlap_frac:.3f}"
+        )
 
     clipped.sort(key=lambda t: t[0].area, reverse=True)
     claimed: BaseGeometry | None = None
@@ -178,15 +211,16 @@ def repair_partition(
     gap = outline.difference(covered)
     gap_frac = gap.area / outline_area if not gap.is_empty else 0.0
     if reject_large_repairs and gap_frac > max_gap_frac:
-        raise RepairRejected(f"gap repair too large: {gap_frac:.3f}")
+        raise RepairRejected(
+            f"gap repair too large: {gap_frac:.3f} > {max_gap_frac:.3f}"
+        )
 
     if not gap.is_empty and gap.area > 0:
         for piece in _iter_polygons(gap):
             if piece.area <= 0:
                 continue
             idx = _nearest_room_idx(piece, resolved)
-            merged = part_union(resolved[idx][0], piece)
-            resolved[idx] = (_largest_polygon(merged), resolved[idx][1])
+            _merge_room_piece(resolved, idx, piece)
 
     out: list[tuple[Polygon, int]] = []
     for poly, label in resolved:
@@ -209,6 +243,9 @@ def _iter_polygons(geom: BaseGeometry) -> Iterable[Polygon]:
         for g in geom.geoms:
             if not g.is_empty:
                 yield g
+    elif isinstance(geom, GeometryCollection):
+        for g in geom.geoms:
+            yield from _iter_polygons(g)
 
 
 def _largest_polygon(geom: BaseGeometry) -> Polygon:
@@ -216,6 +253,18 @@ def _largest_polygon(geom: BaseGeometry) -> Polygon:
     if not polys:
         return geom if isinstance(geom, Polygon) else Polygon()
     return max(polys, key=lambda p: p.area)
+
+
+def _merge_room_piece(rooms: list[tuple[Polygon, int]], idx: int, piece: Polygon) -> None:
+    poly, label = rooms[idx]
+    parts = sorted(
+        _iter_polygons(part_union(poly, piece)),
+        key=lambda p: (-p.intersection(poly).area, -p.area, p.bounds),
+    )
+    if not parts:
+        return
+    rooms[idx] = (parts[0], label)
+    rooms.extend((part, label) for part in parts[1:])
 
 
 def _nearest_room_idx(piece: Polygon, rooms: list[tuple[Polygon, int]]) -> int:

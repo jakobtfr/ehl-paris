@@ -27,7 +27,7 @@ from shapely import wkt
 from shapely.geometry import Polygon
 
 from ..config import PATHS
-from .mrr import RepairRejected, polygon_to_mrr, repair_partition
+from .mrr import RepairRejected, geometry_iou, polygon_to_mrr, repair_partition
 
 
 def _match_iou(originals: list[tuple[Polygon, int]],
@@ -48,9 +48,7 @@ def _match_iou(originals: list[tuple[Polygon, int]],
         if best_j >= 0:
             used.add(best_j)
             r_poly = recon[best_j][0]
-            inter = o_poly.intersection(r_poly).area
-            union = o_poly.union(r_poly).area
-            ious.append(inter / union if union > 0 else 0.0)
+            ious.append(geometry_iou(o_poly, r_poly))
         else:
             ious.append(0.0)  # original room with no reconstructed match
     return ious
