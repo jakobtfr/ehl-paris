@@ -7,6 +7,34 @@ This file is the running handoff log. Newest iteration on top.
 
 ---
 
+## Iteration 6 — outline construction + shell selection tests
+
+**Files changed**
+- `tests/test_data_outline.py` — new, synthetic geometry only. No production change.
+
+Covers the single-source-of-truth conditioning outline:
+- `build_outline` empty input raises; single room round-trips; overlapping rooms fuse
+  without double-counting area; edge-sharing rooms become one polygon; a wall gap within
+  the bridge distance (0.2 m < 2 x 0.3 m) is fused; far-apart rooms stay a 2-part
+  MultiPolygon.
+- `largest_shell` passes polygons through, picks the biggest piece of a MultiPolygon,
+  preserves holes in the chosen piece, and rejects non-polygonal input (TypeError).
+
+Buffer-out/in rounds corners by ~1e-5, so `build_outline` area assertions use a ~1%
+tolerance (topology is the point, not exact area).
+
+**Tests run**
+- `uv run --extra dev pytest tests -q` -> 96 passed.
+- `uv run --extra dev ruff check src/floorgen/data tests` -> clean.
+
+**Blockers** — none new.
+
+**Coverage status** — `src/floorgen/data/` now has direct tests for every module:
+outline (labels + geometry), normalize (transform round-trip), preprocess (load,
+build_records, split, report, end-to-end main).
+
+---
+
 ## Iteration 5 — end-to-end report completeness
 
 **Files changed**
