@@ -7,6 +7,55 @@ This file is the running handoff log. Newest iteration on top.
 
 ---
 
+## Real-data validation (verified against the actual MSD CSV)
+
+The pipeline's assumptions were checked against the real `mds_V2_5.372k.csv`
+(1,086,846 rows; streamed read-only, never extracted or committed). Confirmed facts:
+
+- **Columns**: 17 total; all 7 required (`geom, unit_id, plan_id, floor_id, entity_type,
+  entity_subtype, roomtype`) present. There are also `apartment_id`, `area_id`,
+  `unit_usage`, etc. — per challenge.md, `unit_id` is the apartment key (confirmed).
+- **entity_type**: `separator` 602,196 / `opening` 281,320 / `area` 203,330. The
+  `area` filter is essential.
+- **Label coverage**: all **17** distinct `entity_subtype` values are covered by
+  `SUBTYPE_TO_ROOM` -> **0 unmapped** area rows. `roomtype` has 10 values, all matching
+  `ROOM_NAMES` casing. The taxonomy in `config.py` is complete for this dataset.
+- **Geometry**: all 203,330 area geoms are valid `POLYGON` WKT in metres; **0 empty**.
+  (Multipolygons only arise from `build_outline`'s union, not from raw rows.)
+- **Grouping / leakage**: 18,902 distinct `unit_id`; 5,372 `plan_id` == 5,372 `floor_id`
+  (1:1 here). Every `floor_id` maps to exactly **one** `plan_id` (max plans/floor = 1), so
+  the plan-grouped split is floor-leakage-safe.
+- **Rooms per unit** (excluding blank unit_id): min 1, median 9, mean 9.31, p90 13,
+  p95 15, **p99 18, max 37**. So `MAX_ROOMS_K=24` sits above p99 and below max — sensible;
+  the report's `suggested_max_rooms_k` (~18) backs this up. 251 units have <2 rooms (skipped).
+- **No-unit rows**: **27,405** area rows (13.5%) have blank/NaN `unit_id` and are dropped
+  from grouping (now reported as `n_area_rows_no_unit`).
+- **End-to-end on real geometry**: ran `build_outline -> fit_transform -> invert` on 6 real
+  units. Each fuses to a single 80-93 m^2 Polygon; metric round-trip relative area error
+  was at most **1.44e-16** (float-exact). The inverse transform is correct on real data.
+
+Note: each real apartment carries ~3-4 `Structure` areas (SHAFT/ELEVATOR/VOID). They are
+correctly labelled (never invented); repr/model owners should decide how to treat them.
+
+---
+
+## Iteration 8 — report area rows with no unit_id
+
+**Files changed**
+- `src/floorgen/data/preprocess.py` — `main()` computes `gdf["unit_id"].isna().sum()` and
+  `write_outputs` reports it as `n_area_rows_no_unit`. Surfaces the 13.5% of real area rows
+  dropped for missing unit_id (previously invisible).
+- `tests/test_data_report.py` — end-to-end test extended with a blank-unit_id area row.
+
+**Tests run**
+- `uv run --extra dev pytest tests -q` -> 104 passed.
+- `uv run --extra dev ruff check src/floorgen/data tests` -> clean.
+
+**Blockers** — none new. MSD CSV is read locally (user-provided zip); not downloaded or
+committed, per constraints.
+
+---
+
 ## Iteration 7 — room-count distribution for MAX_ROOMS_K
 
 **Files changed**
