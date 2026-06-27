@@ -1,19 +1,20 @@
-# Mirror Mirror on the Wall: Who Has the Best Room of Them All?
+# Mirror Mirror on the Wall: Who has the best room of them all?
 
-Sponsored by Davis AI. Prize: EUR 500.
+By Davis AI. Prize: 500 EUR.
 
 ## Challenge
 
-Given only the outline of an apartment, its outer walls and nothing else,
-generate a complete and plausible set of interior rooms as vector polygons. The
-model decides where the kitchen, bedrooms, bathroom, hallway, and living spaces
-go, then draws each one as a clean polygon that fills the available floor area.
+Given only the outline of an apartment, generate a complete and plausible set of
+interior rooms as vector polygons, using a diffusion or flow-matching model.
+The model decides where the kitchen, bedrooms, bathroom, hallway, and living
+spaces go, then draws each one as a clean polygon that fills the available floor
+area.
 
-The constraint that makes this interesting: the layout must be produced
-generatively, using a diffusion or flow-matching model. Submissions are not
-judged against one correct answer. They are judged against the distribution of
-real Swiss residential floor plans. A strong submission produces layouts that
-are both:
+Entries are scored on the realism and diversity of the generated layouts,
+measured by FID, density, and coverage against real Swiss residential floor
+plans. Submissions are not judged against one correct answer. They are judged
+against the distribution of real Swiss residential floor plans. A strong
+submission produces layouts that are both:
 
 - **Realistic:** they look like something an architect would actually draw.
 - **Diverse:** given the same outline, the model can propose several genuinely
@@ -23,7 +24,8 @@ are both:
 
 - **Input:** boundary polygon of an apartment, used as the condition.
 - **Output:** set of interior room polygons that partition the apartment, each
-  labelled by room type.
+  labelled by room type, in the same geometry format as the MSD `geom` column
+  so the same rendering script can be used.
 - **Method constraint:** the generator must be a diffusion or flow-matching
   model, not a deterministic solver or a purely rule-based partitioner.
 
@@ -70,10 +72,16 @@ Teams are free to choose:
 
 The representation may be anything except a pixel grid.
 
-## Scoring
+## Judging Criteria
 
-Submissions are evaluated on two axes, realism and diversity, against a held-out
-set of real Swiss floor plans.
+Solutions are scored against FID and Diversity & Coverage. In metric terms,
+this means FID, density, and coverage against a held-out set of real Swiss floor
+plans.
+
+To win, the generated layouts need to be both realistic and broad: low-FID
+plans that resemble real Swiss apartments, high-density samples that stay on the
+real data manifold, and high-coverage samples that avoid collapsing to one safe
+layout pattern.
 
 Evaluator clarification from organisers:
 
@@ -82,7 +90,14 @@ Evaluator clarification from organisers:
 - **FID:** computed with TorchMetrics'
   `torchmetrics.image.fid.FrechetInceptionDistance`.
 - **Rendering:** vector layouts are rasterised with the rendering scripts from
-  the official MSD repository, especially `plot.py`.
+  the official MSD repository, especially `plot.py`. The MSD script is the
+  source of truth for rendering settings such as `512x512` image size, colors,
+  line widths, padding, antialiasing, and whether graph details are drawn.
+- **Room types:** room labels are used in rendering, so semantic labels affect
+  rendered colors and can directly affect FID.
+- **Test-time compute:** seed and sample count are not predetermined by the
+  organisers. Teams may generate as many candidates as they want, and may use
+  post-processing or ranking, as long as the method is documented properly.
 
 ### FID: Frechet Inception Distance
 
@@ -110,21 +125,30 @@ plans should score high coverage but low density. The goal is to score well on
 both.
 
 Scoring is run by the organisers on a held-out set of plans with a fixed
-protocol: reference set, rasterisation, sample count, and seed `42`. This makes
-scores comparable across teams.
+reference set and rasterisation path. Teams should document their generation
+seed, number of candidates per outline, post-processing, and ranking strategy so
+scores are interpretable and reproducible.
 
 ## Rules and Integrity
 
 - **Time:** Saturday to Sunday.
 - **Model:** diffusion- or flow-matching-based, trained from scratch.
-- **Seed:** fixed random seed `42` throughout data handling, training,
-  sampling, and evaluation.
+- **Reproducibility:** document random seeds, sample counts, test-time compute,
+  post-processing, and ranking. Seed `42` may be useful for local reproducible
+  experiments, but the organiser clarified that the final seed is not
+  predetermined.
 - **Honest reporting:** results must be honest and reproducible.
 - **No leakage:** do not train on the test/evaluation set or otherwise leak
   held-out data into training.
 - **Metrics:** report correct metrics.
 
 ## Submission
+
+Submission requirements:
+
+- Pitch deck
+- GitHub repository
+- Live demo
 
 | Field | What it is | Format | Required |
 | --- | --- | --- | --- |
@@ -136,6 +160,8 @@ The repository should include training and generation code, a
 `generate(outline)` entry point that returns room polygons, and a short
 methodology writeup. Include model weights when practical, or at minimum make
 the weight/generation provenance inspectable from code, configs, and logs.
+Generated test-split outputs should match the MSD `geom` column format so the
+same rendering script can be used.
 
 Organiser clarification: generally the generated outputs for the test split are
 enough for scoring, but the presentation must explain the model and
@@ -158,13 +184,15 @@ review. Review weighting:
 
 ## At a Glance
 
-- **Sponsor:** Davis AI
-- **Prize:** EUR 500
+- **By:** Davis AI
+- **Prize:** 500 EUR
 - **Type:** scored challenge, counts for league points
 - **Task:** generative floor-plan completion from an apartment outline
 - **Model class:** diffusion or flow matching
 - **Metrics:** FID, density, coverage
 - **Dataset:** real Swiss residential floor plans
+- **Winning guidance:** be original, keep room labels meaningful, and document
+  any test-time compute or post-processing.
 
 ## Resources
 
