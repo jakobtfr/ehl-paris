@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import pytest
 from shapely import affinity
 from shapely.geometry import GeometryCollection, LineString, MultiPolygon, box
 
+from floorgen.config import ROOM_NAMES
 from floorgen.repr.mrr import (
     RepairRejected,
     RoomMRR,
@@ -58,6 +60,19 @@ def test_array_roundtrip():
     for a, b in zip(mrrs, back):
         assert (a.cx, a.cy, a.w, a.h, a.label_idx) == (b.cx, b.cy, b.w, b.h, b.label_idx)
         assert wrapped_angle_distance(a.angle, b.angle) < 1e-6
+
+
+def test_array_decode_clamps_label_indices_to_taxonomy():
+    arr = np.array(
+        [
+            [0, 0, 1, 1, 0, -3],
+            [0, 0, 1, 1, 0, len(ROOM_NAMES) + 5],
+            [0, 0, 1, 1, 0, math.nan],
+        ],
+        dtype=np.float32,
+    )
+
+    assert [m.label_idx for m in array_to_mrrs(arr)] == [0, len(ROOM_NAMES) - 1, 0]
 
 
 def test_repair_contains_and_partitions():

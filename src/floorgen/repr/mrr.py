@@ -55,7 +55,7 @@ class RoomMRR:
         self.w = w
         self.h = h
         self.angle = canonical_angle(angle)
-        self.label_idx = int(round(self.label_idx))
+        self.label_idx = _canonical_label_idx(self.label_idx)
 
     @property
     def label(self) -> str:
@@ -78,6 +78,13 @@ def wrapped_angle_distance(a: float, b: float) -> float:
     """Smallest absolute angle distance for rectangle orientations modulo pi."""
 
     return abs(canonical_angle(a - b))
+
+
+def _canonical_label_idx(label_idx: float) -> int:
+    value = float(label_idx)
+    if not math.isfinite(value):
+        return 0
+    return min(max(int(round(value)), 0), len(ROOM_NAMES) - 1)
 
 
 def polygon_to_mrr(poly: Polygon, label_idx: int) -> RoomMRR:
