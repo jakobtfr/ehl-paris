@@ -166,6 +166,11 @@ review. Review weighting:
 - **Metrics:** FID, density, coverage
 - **Dataset:** real Swiss residential floor plans
 
+## Resources
+
+- [Modified Swiss Dwellings dataset on Kaggle](https://www.kaggle.com/datasets/caspervanengelenburg/modified-swiss-dwellings/data)
+- [Hackathon slide deck](https://hackathon.commercialdeckdavis.com/) - slide 7 contains the challenge description.
+
 ## Appendix: Provided Data-Construction Script
 
 The reference script loads the geometry dataframe, selects one dwelling's room
