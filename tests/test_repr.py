@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pytest
 from shapely import affinity
-from shapely.geometry import GeometryCollection, LineString, MultiPolygon, box
+from shapely.geometry import GeometryCollection, LineString, MultiPolygon, Polygon, box
 
 from floorgen.config import ROOM_NAMES
 from floorgen.repr.mrr import (
@@ -15,6 +15,7 @@ from floorgen.repr.mrr import (
     RoomMRR,
     _iter_polygons,
     array_to_mrrs,
+    canonical_angle,
     encode_decode_iou,
     geometry_iou,
     mrrs_to_array,
@@ -33,9 +34,31 @@ def test_polygon_to_mrr_preserves_rotated_rectangle_geometry():
     assert mrr.w >= mrr.h
 
 
+def test_polygon_to_mrr_returns_degenerate_mrr_for_empty_polygon():
+    mrr = polygon_to_mrr(Polygon(), label_idx=7)
+
+    assert (mrr.cx, mrr.cy, mrr.w, mrr.h, mrr.angle, mrr.label_idx) == (
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        7,
+    )
+    assert mrr.to_polygon().is_empty
+
+
 def test_angle_distance_wraps_modulo_pi():
     assert wrapped_angle_distance(0.0, math.pi) < 1e-9
     assert wrapped_angle_distance(math.pi / 2 - 0.01, -math.pi / 2 + 0.01) < 0.03
+
+
+def test_canonical_angle_stays_in_half_open_pi_range():
+    for angle in np.linspace(-8 * math.pi, 8 * math.pi, 33):
+        wrapped = canonical_angle(float(angle))
+
+        assert -math.pi / 2 <= wrapped < math.pi / 2
+        assert wrapped_angle_distance(wrapped, float(angle)) < 1e-9
 
 
 def test_room_mrr_canonicalizes_dimensions_without_changing_geometry():
@@ -61,6 +84,22 @@ def test_array_roundtrip():
     for a, b in zip(mrrs, back):
         assert (a.cx, a.cy, a.w, a.h, a.label_idx) == (b.cx, b.cy, b.w, b.h, b.label_idx)
         assert wrapped_angle_distance(a.angle, b.angle) < 1e-6
+
+
+def test_array_decode_accepts_single_token_and_rejects_bad_shapes():
+    one = array_to_mrrs(np.array([1, 2, 3, 1, 0.2, 4], dtype=np.float32))
+
+    assert len(one) == 1
+    assert (one[0].cx, one[0].cy, one[0].w, one[0].h, one[0].label_idx) == (
+        1,
+        2,
+        3,
+        1,
+        4,
+    )
+
+    with pytest.raises(ValueError, match=r"shape \(N, 6\)"):
+        array_to_mrrs(np.zeros((2, 5), dtype=np.float32))
 
 
 def test_array_decode_clamps_label_indices_to_taxonomy():
@@ -120,6 +159,21 @@ def test_partition_accounting_reports_valid_repair_fractions():
     assert accounting.overlap_frac < 1e-9
     assert accounting.gap_frac < 1e-9
     assert accounting.outside_frac < 1e-9
+
+
+def test_partition_accounting_reports_nonzero_fractions():
+    outline = box(0, 0, 4, 4)
+    accounting = partition_accounting(
+        [
+            (box(0, 0, 3, 2), 0),
+            (box(2, 0, 5, 2), 7),
+        ],
+        outline,
+    )
+
+    assert accounting.overlap_frac == pytest.approx(0.125)
+    assert accounting.gap_frac == pytest.approx(0.5)
+    assert accounting.outside_frac == pytest.approx(0.125)
 
 
 def test_repair_rejects_large_overlap_with_limit_in_message():

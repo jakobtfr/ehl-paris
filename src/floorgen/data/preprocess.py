@@ -24,7 +24,7 @@ from typing import Any
 from ..config import PATHS, ROOM_NAME_TO_IDX, SEED
 from ..seeding import seed_everything
 from .normalize import fit_transform, scale_features
-from .outline import build_outline, canonical_room_name
+from .outline import build_outline, classify_room
 
 REQUIRED_COLS = {
     "geom", "unit_id", "plan_id", "floor_id",
@@ -32,25 +32,62 @@ REQUIRED_COLS = {
 }
 
 
-def _load(csv_path: Path) -> Any:
-    import geopandas as gpd
-    import pandas as pd
+def _try_load_wkt(value: Any) -> Any:
+    """Parse one WKT cell, returning None for anything unusable.
+
+    A non-string (NaN/None), unparseable WKT, or empty geometry yields None so a
+    single bad row never aborts the whole load. Real parse failures are surfaced
+    as a count by :func:`parse_area_geometries`, not silently swallowed.
+    """
     from shapely import wkt
+
+    if not isinstance(value, str):
+        return None
+    try:
+        g = wkt.loads(value)
+    except Exception:
+        return None
+    return None if (g is None or g.is_empty) else g
+
+
+def parse_area_geometries(df: Any) -> tuple[Any, int]:
+    """Validate schema, keep ``entity_type == "area"`` rows, parse geometries.
+
+    Returns ``(gdf, n_invalid)`` where ``n_invalid`` counts area rows whose
+    geometry could not be parsed (or was empty) and were dropped.
+    """
+    import geopandas as gpd
+
+    missing = sorted(REQUIRED_COLS - set(df.columns))
+    if missing:
+        raise ValueError(f"CSV missing columns: {missing}")
+    area = df[df["entity_type"] == "area"].copy()
+    parsed = area["geom"].apply(_try_load_wkt)
+    valid = parsed.notna()
+    n_invalid = int((~valid).sum())
+    area = area.loc[valid].copy()
+    area["geom"] = parsed[valid]
+    return gpd.GeoDataFrame(area, geometry="geom"), n_invalid
+
+
+def _load(csv_path: Path) -> tuple[Any, int]:
+    import pandas as pd
 
     if not csv_path.exists():
         raise FileNotFoundError(f"MSD CSV not found: {csv_path}. Set MSD_CSV_PATH.")
     df = pd.read_csv(csv_path)
-    missing = sorted(REQUIRED_COLS - set(df.columns))
-    if missing:
-        raise ValueError(f"CSV missing columns: {missing}")
-    df = df[df["entity_type"] == "area"].copy()
-    df["geom"] = df["geom"].apply(wkt.loads)
-    return gpd.GeoDataFrame(df, geometry="geom")
+    return parse_area_geometries(df)
 
 
-def build_records(gdf: Any, limit_units: int = 0) -> tuple[list[dict], int]:
-    """One record per unit_id: outline, rooms, transform, scale features, meta."""
+def build_records(gdf: Any, limit_units: int = 0) -> tuple[list[dict], int, Counter]:
+    """One record per unit_id: outline, rooms, transform, scale features, meta.
+
+    Returns ``(records, skipped, unmapped)`` where ``unmapped`` counts the raw
+    ``subtype=...|roomtype=...`` sources that fell back to 'Structure' because
+    they were not recognised, so unknown labels stay auditable.
+    """
     records: list[dict] = []
+    unmapped: Counter = Counter()
     unit_ids = list(gdf["unit_id"].dropna().unique())
     if limit_units:
         unit_ids = unit_ids[:limit_units]
@@ -76,7 +113,10 @@ def build_records(gdf: Any, limit_units: int = 0) -> tuple[list[dict], int]:
 
         rooms = []
         for _, row in u.iterrows():
-            label = canonical_room_name(row.get("entity_subtype"), row.get("roomtype"))
+            subtype, roomtype = row.get("entity_subtype"), row.get("roomtype")
+            label, matched = classify_room(subtype, roomtype)
+            if not matched:
+                unmapped[f"subtype={subtype}|roomtype={roomtype}"] += 1
             geom = row["geom"]
             rooms.append({
                 "label": label,
@@ -95,7 +135,7 @@ def build_records(gdf: Any, limit_units: int = 0) -> tuple[list[dict], int]:
             "scale_features": asdict(feats),
             "rooms": rooms,
         })
-    return records, skipped
+    return records, skipped, unmapped
 
 
 def split_by_plan(records: list[dict], val_frac: float = 0.15, seed: int = SEED) -> dict[int, str]:
@@ -110,9 +150,62 @@ def split_by_plan(records: list[dict], val_frac: float = 0.15, seed: int = SEED)
     return {r["unit_id"]: ("val" if r["plan_id"] in val_plans else "train") for r in records}
 
 
+def room_count_distribution(records: list[dict]) -> dict[str, Any]:
+    """Histogram + percentiles of rooms-per-unit, with a suggested slot count.
+
+    MAX_ROOMS_K (the model's fixed slot count) should be chosen from real data;
+    ``suggested_max_rooms_k`` is the 99th percentile rounded up, i.e. the
+    smallest slot count that fits ~99% of units. Reported so the choice is
+    data-driven and auditable.
+    """
+    import numpy as np
+
+    counts = [int(r["n_rooms"]) for r in records]
+    if not counts:
+        return {"histogram": {}, "p50": 0, "p90": 0, "p95": 0, "p99": 0,
+                "suggested_max_rooms_k": 0}
+    hist = Counter(counts)
+    pcts = {f"p{q}": float(np.percentile(counts, q)) for q in (50, 90, 95, 99)}
+    return {
+        "histogram": {int(k): int(v) for k, v in sorted(hist.items())},
+        **pcts,
+        "suggested_max_rooms_k": int(np.ceil(pcts["p99"])),
+    }
+
+
+def split_summary(records: list[dict], split: dict[int, str]) -> dict[str, Any]:
+    """Unit- and plan-level split counts plus an explicit leakage check.
+
+    The split is leakage-safe when every unit of a plan shares one split.
+    ``plan_leakage`` lists any ``plan_id`` whose units landed in more than one
+    split (should always be empty); it makes the guarantee auditable rather than
+    merely assumed.
+    """
+    unit_counts: Counter = Counter(split[r["unit_id"]] for r in records)
+    plan_to_split: dict[int, str] = {}
+    leaked: set[int] = set()
+    for r in records:
+        plan_id, s = r["plan_id"], split[r["unit_id"]]
+        if plan_id in plan_to_split and plan_to_split[plan_id] != s:
+            leaked.add(plan_id)
+        plan_to_split[plan_id] = s
+    plan_counts: Counter = Counter(plan_to_split.values())
+    return {
+        "unit_counts": dict(unit_counts),
+        "plan_counts": dict(plan_counts),
+        "n_plans": len(plan_to_split),
+        "plan_leakage": sorted(leaked),
+    }
+
+
 def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
-                  reports_dir: Path, skipped: int) -> None:
+                  reports_dir: Path, skipped: int,
+                  unmapped: Counter | None = None,
+                  n_invalid_geom: int = 0,
+                  n_area_rows_no_unit: int = 0) -> None:
     import pandas as pd
+
+    unmapped = unmapped or Counter()
 
     out_dir.mkdir(parents=True, exist_ok=True)
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -147,9 +240,13 @@ def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
     report = {
         "n_units": len(records),
         "n_skipped": skipped,
+        "n_invalid_geom_rows": int(n_invalid_geom),
+        "n_area_rows_no_unit": int(n_area_rows_no_unit),
         "n_plans": int(manifest["plan_id"].nunique()),
         "n_floors": int(manifest["floor_id"].nunique()),
         "split_counts": manifest["split"].value_counts().to_dict(),
+        "split_summary": split_summary(records, split),
+        "room_count_distribution": room_count_distribution(records),
         "rooms_per_unit": {
             "min": int(manifest["n_rooms"].min()),
             "median": float(manifest["n_rooms"].median()),
@@ -162,6 +259,8 @@ def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
             "max": float(manifest["area_m2"].max()),
         },
         "label_frequencies": dict(label_counter.most_common()),
+        "n_unmapped_rooms": int(sum(unmapped.values())),
+        "unmapped_label_sources": dict(unmapped.most_common(20)),
     }
     (reports_dir / "preprocess_report.json").write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2))
@@ -180,13 +279,16 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     seed_everything(SEED)
-    gdf = _load(args.csv)
-    records, skipped = build_records(gdf, limit_units=args.limit_units)
+    gdf, n_invalid_geom = _load(args.csv)
+    n_area_rows_no_unit = int(gdf["unit_id"].isna().sum())
+    records, skipped, unmapped = build_records(gdf, limit_units=args.limit_units)
     if not records:
         print("error: no usable units produced.")
         return 1
     split = split_by_plan(records, val_frac=args.val_frac, seed=SEED)
-    write_outputs(records, split, args.out, args.reports, skipped)
+    write_outputs(records, split, args.out, args.reports, skipped, unmapped,
+                  n_invalid_geom=n_invalid_geom,
+                  n_area_rows_no_unit=n_area_rows_no_unit)
     return 0
 
 

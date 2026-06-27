@@ -108,6 +108,9 @@ def _canonical_label_idx(label_idx: float) -> int:
 def polygon_to_mrr(poly: Polygon, label_idx: int) -> RoomMRR:
     """Encode a room polygon as its Shapely minimum rotated rectangle."""
 
+    if poly.is_empty or poly.area <= 0:
+        return RoomMRR(0.0, 0.0, 0.0, 0.0, 0.0, label_idx)
+
     rect = poly.minimum_rotated_rectangle
     coords = list(rect.exterior.coords)[:-1]
     if len(coords) != 4:
@@ -191,6 +194,16 @@ def mrrs_to_array(mrrs: list[RoomMRR]) -> np.ndarray:
 
 
 def array_to_mrrs(arr: np.ndarray) -> list[RoomMRR]:
+    arr = np.asarray(arr)
+    if arr.size == 0:
+        return []
+    if arr.ndim == 1:
+        if arr.shape[0] != 6:
+            raise ValueError(f"MRR array must have shape (N, 6), got {arr.shape}")
+        arr = arr.reshape(1, 6)
+    if arr.ndim != 2 or arr.shape[1] != 6:
+        raise ValueError(f"MRR array must have shape (N, 6), got {arr.shape}")
+
     return [
         RoomMRR(
             cx=float(r[0]),
@@ -295,13 +308,6 @@ def _iter_polygons(geom: BaseGeometry) -> Iterable[Polygon]:
     elif isinstance(geom, GeometryCollection):
         for g in geom.geoms:
             yield from _iter_polygons(g)
-
-
-def _largest_polygon(geom: BaseGeometry) -> Polygon:
-    polys = list(_iter_polygons(geom))
-    if not polys:
-        return geom if isinstance(geom, Polygon) else Polygon()
-    return max(polys, key=lambda p: p.area)
 
 
 def _merge_room_piece(rooms: list[tuple[Polygon, int]], idx: int, piece: Polygon) -> None:
