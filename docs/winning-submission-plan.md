@@ -3,22 +3,35 @@
 ## Thesis
 
 Win by building the most evaluation-aligned system, not the fanciest model. The
-challenge rewards a generated distribution of valid vector room partitions. The
-highest-ROI strategy is a flow-matching generator over a vector layout
-parameterisation that is valid by construction, plus deterministic repair and
-metric-aware sample ranking.
+challenge rewards a generated distribution of realistic, diverse vector room
+layouts. The highest-ROI strategy is a flow-matching generator that emits room
+**geometry directly** (axis-aligned boxes or ordered corner sequences), plus a
+deterministic layer that only repairs the output into a clean partition, plus a
+metric-aware local evaluator.
 
-The core idea: generate room tokens and wall-layout controls, then convert them
-into clipped vector polygons with a rectilinear partition layer inside the
-apartment outline. The generative model samples the room count, room labels,
-room sites, target areas, and partition controls. Deterministic code may only
-enforce vector validity: no gaps, no overlaps, no outside-outline area, and
-clean polygons.
+The core idea: the generative model samples the room count, room labels, and the
+actual room geometry (box corners or corner sequences) conditioned on the
+outline. Keep as much of the geometry generative as possible. Deterministic code
+may only enforce vector validity: snap to the outline, resolve small
+gaps/overlaps, clip outside-outline area, and clean polygons. The deterministic
+layer must not be what decides room *shape* — the challenge forbids a
+"deterministic solver or purely rule-based partitioner", so shape diversity has
+to come from the model.
 
-Use weighted Voronoi or power-diagram partitioning only if an oracle
-reconstruction gate proves that it rasterizes like real floor plans. If it
-creates too many diagonal or convex cells, switch to a Manhattan-constrained
-partition, wall-line graph, or slicing-tree representation before training.
+Default representation: direct geometry. The challenge brief explicitly suggests
+"rectangles or corner sequences" as room representations, and real Swiss rooms
+are rectilinear, so direct boxes/corner sequences rasterize like real plans and
+keep shape generative. Lean on published vector floor-plan generators
+(HouseDiffusion diffuses room corner coordinates; House-GAN++ and the Modified
+Swiss Dwellings baseline are directly relevant) instead of inventing a
+representation from scratch, but adapt them to condition on **outline only** (no
+input room graph), which is the harder setting here.
+
+Alternative representations (weighted Voronoi / power diagram, slicing tree,
+wall-line graph) are allowed only if the oracle reconstruction gate proves they
+rasterize like real floor plans *and* leave enough shape decisions to the model
+to stay clear of the rule-based-partitioner line. Expect Voronoi/power cells to
+fail the gate (convex, diagonal cells unlike real plans); do not start there.
 
 ## Product the Judges See
 
@@ -70,6 +83,10 @@ Outputs:
 - polygons must partition the outline within tolerance
 - labels must be from the documented taxonomy
 - same outline plus same seed must produce stable output
+- with `n_samples > 1`, the samples must be **distinct but deterministic**: seed
+  `42` fixes the RNG, and successive draws differ from one another, so coverage
+  is preserved while the run stays reproducible (the official protocol fixes a
+  sample count and seed `42`, so the scored path draws multiple samples)
 
 Contract tests:
 
@@ -78,7 +95,9 @@ Contract tests:
 - no pairwise overlap beyond tolerance
 - union area matches outline area within tolerance
 - all rooms have labels
-- seed `42` is deterministic
+- seed `42` is deterministic for a single sample
+- repeated `generate(outline, seed=42, n_samples=N)` calls reproduce the same N
+  samples, and those N samples are not near-duplicates of each other
 - GeoJSON serialization round-trips
 
 ## Architecture
@@ -90,12 +109,21 @@ Build a reproducible MSD preprocessing pipeline:
 - Load `mds_V2_5.372k.csv`.
 - Filter `entity_type == "area"`.
 - Repair invalid geometries with a logged, deterministic policy.
-- Canonicalise room labels into a small stable taxonomy: living, kitchen,
-  bedroom, bathroom, corridor, storage/utility, balcony/other if present.
+- Canonicalise room labels into a small stable taxonomy, anchored on the actual
+  label values present in the CSV for `entity_type == "area"` rows (inspect the
+  distinct subtypes first; do not invent categories). Map the long tail to a
+  handful of stable buckets (e.g. living, kitchen, bedroom, bathroom, corridor,
+  storage/utility, balcony/other) and keep an explicit reverse mapping to the
+  official taxonomy for output.
 - Construct the outline exactly as specified: buffer rooms by `0.3`, union, then
   buffer back by `-0.3`.
-- Normalise each plan for modelling: translate to origin, scale by square root
-  of outline area, store inverse transform for final output.
+- Normalise each plan's *shape* for modelling: translate to origin, scale by
+  square root of outline area, store inverse transform for final output.
+- Crucially, this makes every plan unit-area, which erases absolute scale. Store
+  the pre-normalisation absolute area and bounding-box width/height as separate
+  conditioning scalars, because room count and type mix depend on absolute size
+  (a 30 m² studio vs a 120 m² flat). Without this the count head has no scale
+  signal.
 - Save train/validation splits by `plan_id`, with seed `42`.
 
 Deliverables:
@@ -107,96 +135,135 @@ Deliverables:
 
 ### 2. Vector Representation
 
-Represent each layout as a variable-size set of room tokens:
+The model emits room geometry directly. Two candidate parameterisations, in
+preference order:
 
-```text
-room_token = (x, y, log_area, aspect_hint, room_type, presence, wall_controls)
-```
+1. **Axis-aligned boxes (default).** Each room token is
+   `(cx, cy, w, h, room_type, presence)`. Simple, rectilinear, trivially valid,
+   and a good match for the majority of Swiss rooms. The deterministic layer
+   only snaps edges, resolves small overlaps/gaps, and clips to the outline.
+2. **Ordered corner sequences (stretch).** Each room is a fixed-length sequence
+   of corner coordinates with a stop/presence flag, à la HouseDiffusion. Handles
+   L-shaped and non-rectangular rooms; more expressive but harder to keep valid.
+
+Both keep the room *shape* generative, which is what the rules require. Pick (1)
+first; only move to (2) if the oracle gate shows boxes can't reconstruct real
+plans well enough.
 
 Condition on the outline using:
 
 - resampled boundary points, for example 128 points along the exterior
-- scalar descriptors: area, perimeter, compactness, bounding-box ratio, number
-  of vertices
-- optional raster preview only as a conditioning feature, never as the output
+- **absolute scale scalars: total area (m²) and bounding-box width/height**, fed
+  separately so the count/type heads can use real scale (see normalisation note
+  in the data pipeline — shape is unit-area normalised, so absolute area is
+  otherwise lost)
+- shape scalars: perimeter, compactness, bounding-box aspect ratio, vertex count
+- optional low-res raster of the outline as a conditioning feature only, never as
+  the output
 
-Convert generated tokens to final polygons with a deterministic vectorizer:
+Deterministic validity-repair layer (repair only, not shape generation):
 
-- infer rectilinear partition lines or cells from room sites, target areas, and
-  wall controls
-- optionally create Manhattan-constrained weighted cells if oracle
-  reconstruction validates the look
-- clip cells to the input outline
-- assign each cell the generated room type
-- merge or remove tiny cells by deterministic rules
-- snap, simplify, and validate polygons
-- ensure returned polygons partition the outline
+- snap room edges to each other and to the outline within a small tolerance
+- resolve small pairwise overlaps and gaps by clipping/snapping shared edges
+- clip rooms to the input outline
+- merge or drop sub-resolution slivers by a fixed rule, then re-fill the freed
+  area to the adjacent room so the partition stays gap-free
+- simplify and validate polygons; assign each polygon its generated room type
+- ensure returned polygons partition the outline within tolerance
 
 Why this is strong:
 
-- Vector polygons are produced directly.
-- Gaps and overlaps are structurally avoided.
-- Rectilinear cells better match architectural floor plans after rasterization.
-- Room areas and labels remain generative.
-- Diversity comes from sampling token sets.
-- The repair layer makes outputs robust under hidden evaluation.
+- Vector polygons are produced directly by the model.
+- Room shapes, areas, types, and count are all generative — safe on the
+  "no rule-based partitioner" rule.
+- Rectilinear geometry matches real floor plans after rasterization.
+- Diversity comes from sampling the model, not from a partition heuristic.
+- The repair layer makes outputs robust under hidden evaluation without taking
+  over shape generation.
 
 Oracle reconstruction gate:
 
-- encode real room polygons into the proposed token representation
-- run only the deterministic vectorizer
-- rasterize reconstructed layouts beside the original real layouts
+- encode real room polygons into the chosen representation (fit boxes / extract
+  corner sequences from real rooms)
+- run only the deterministic repair layer
+- rasterize reconstructed layouts beside the original real layouts, **using the
+  same rasteriser the evaluator path uses**
 - compute reconstruction IoU, room-area error, boundary error, and local FID
 - require visual/metric acceptability before model training
-- if the gate fails, change the representation before spending time on neural
-  training
+- if the gate fails for boxes, move to corner sequences; if both fail, only then
+  consider Voronoi/slicing — but re-check the rule-alignment risk first
 
 ### 3. Generative Model
 
-Use conditional flow matching over room-token sets.
+Use conditional flow matching. Given the weekend time budget, the **primary**
+model is the simpler fixed-slot design, not the variable-cardinality set model.
 
-Model shape:
+Primary model (build this first):
 
-- outline encoder: PointNet or small Transformer over boundary points
-- room-token denoiser/vector field: Set Transformer or Transformer decoder with
-  room slots
-- count head: predicts room-count distribution conditioned on outline
-- type head: predicts categorical room labels
-- continuous head: predicts token coordinates, area, and shape hints
-
-Training:
-
-- train from scratch
-- seed everything with `42`
-- map unordered ground-truth rooms to slots with Hungarian matching over room
-  type, centroid, area, and aspect/shape features; keep a deterministic
-  canonical fallback sorted by type, area, then centroid for debugging
-- losses: flow-matching loss for continuous token variables, cross-entropy for
-  room count and labels, auxiliary losses for area distribution and room-count
-  calibration
+- fixed `K` room slots (K = max plausible room count, e.g. 12), each slot a
+  continuous geometry vector (box `cx, cy, w, h` or corner sequence)
+- presence logit per slot handles variable room counts without a separate
+  set-cardinality mechanism
+- outline encoder: PointNet or small Transformer over boundary points, plus the
+  absolute-scale and shape scalars
+- denoiser/vector field: small Transformer over the K slots conditioned on the
+  outline encoding
+- type head: categorical room label per slot
+- losses: flow-matching loss for slot geometry, cross-entropy for presence and
+  labels, auxiliary loss for area distribution / room-count calibration
+- map unordered ground-truth rooms to slots with Hungarian matching over type,
+  centroid, area, and aspect; keep a deterministic canonical ordering (type,
+  area, centroid) as a debugging fallback
+- train from scratch; seed everything with `42`
 - augment with rotations, mirrors, coordinate jitter, and small outline
-  simplification noise
-- keep augmentations invertible and label-preserving
+  simplification noise; keep augmentations invertible and label-preserving
 
-Fallback if time is tight:
+Stretch model (only if the primary is solid and time remains):
 
-- train a smaller conditional diffusion/flow model over fixed `K` room slots
-- use presence logits for variable room counts
-- still keep the vectorizer and repair layer
-- keep the heuristic sampler as a baseline and emergency demo only, not the
-  official scored generator unless approved
+- conditional flow matching over a variable-size **set** of room tokens with a
+  Set Transformer and an explicit count head, removing the fixed-`K` cap
+- higher ceiling on diversity and large apartments, but many more moving parts;
+  do not let it block a working submission
+
+Compute note: training a generative model from scratch to good FID in a few
+hours is only realistic with a GPU. State the available hardware up front. If
+GPU is limited, keep `K` small, the model small, and start training early
+(overlap with pipeline work) rather than waiting for the oracle gate.
+
+Baseline only, never the scored generator: a heuristic token sampler from real
+room-count/type/area distributions. Use it as an evaluation baseline and
+emergency demo fallback only, unless organisers explicitly approve otherwise.
 
 ### 4. Metric-Aligned Local Evaluation
 
-Build a local evaluator before model tuning. Default settings:
+Build a local evaluator before model tuning. The rasteriser is the single
+highest-leverage unknown, so make the default match the provided
+data-construction script exactly: same colouring (the brief's script colours
+rooms with `cmap="Set3"` by row order, i.e. effectively arbitrary per-room
+colours), same edge/line treatment, equal-aspect axes. Keep every rasterisation
+parameter in one config so it can be swapped to the official setting instantly.
+
+This colouring detail forks the whole strategy:
+
+- if rooms are coloured arbitrarily (per-room) or as binary occupancy, **room
+  type does not affect FID** — only partition geometry does, so optimise
+  geometry first and treat labels as a correctness/code-review concern
+- if rooms are coloured by **type** with a fixed palette, the spatial
+  arrangement of types matters a lot for FID — invest in type placement
+- resolve this with the organisers (see questions) and branch accordingly
+
+Default settings:
 
 - raster size: `256 x 256`
 - padding: 5% of the outline bounding box
 - feature extractor: ImageNet InceptionV3 pool features as the baseline, unless
   the official harness specifies a different encoder
 - density/coverage `k`: `5`
-- validation sample count: `5` samples per validation outline for diversity
-  checks, plus `1` default sample for evaluator-compatibility checks
+- diversity check: `5` samples per validation outline, plus `1` default sample
+  for evaluator-compatibility checks
+- FID/density/coverage sample budget: these are noisy on small sets, so compute
+  them over a few hundred+ generated rasters total, not just a handful per
+  outline
 
 Evaluator outputs:
 
@@ -241,6 +308,46 @@ and compatible with hidden coverage scoring. If ranking is allowed, tune the
 ranker to reject broken layouts without collapsing every outline to the same
 safe template.
 
+## Engineering and Logistics
+
+Code quality is the single largest scored criterion (30%), and several
+submission requirements are pure logistics that sink teams late on Sunday.
+Decide these on day one.
+
+Repo layout and tooling:
+
+- Package manager and runtime: `uv` with a single `pyproject.toml`; pin all deps
+  (shapely, geopandas, torch, numpy, matplotlib) with a committed lockfile.
+- Module separation, one concern each: `data/` (preprocessing + splits),
+  `repr/` (encode/decode geometry + validity repair), `model/` (flow model +
+  training), `eval/` (rasteriser + FID/density/coverage), `generate.py`
+  (the `generate(outline)` entry point), `demo/` (live app).
+- Quality gates: `ruff` (lint + format), `mypy` on core modules, `pytest` for
+  the contract tests and a representation round-trip test. Wire a minimal CI
+  workflow so the review sees green checks.
+- Config: one YAML/dataclass config holding seed, rasterisation params, model
+  size, and `K`; no magic numbers scattered in code.
+- Determinism utility: a single `seed_everything(42)` covering python/numpy/torch
+  RNG; note that full CUDA training determinism needs extra cudnn flags and may
+  cost speed — inference determinism for `generate` is the must-have.
+
+Submission deliverables (all required by the brief):
+
+- **Live demo URL**: pick the host now (Gradio on Hugging Face Spaces or
+  Streamlit Community Cloud). Cache the model at startup; aim for seconds per
+  sample; show several samples per outline. Build the deploy path early — Sunday
+  hosting surprises are a known time sink.
+- **Model weights in the repo**: commit via Git LFS or attach as a release
+  asset; document the download/load path so a clean clone works.
+- **`generate(outline)` entry point**: export exactly this symbol as canonical;
+  keep the extra knobs (`seed`, `n_samples`, `mode`) on a separate function so
+  evaluator introspection of `generate` can't trip.
+- **Working-session branch**: ensure `entire/checkpoints/v1` exists and captures
+  the session record with at least one prompt; treat this as a checklist item
+  from the start, not a final-hour scramble.
+- **Methodology writeup + pitch deck**: keep a running notes file so the deck
+  and writeup are assembled, not written from scratch at the end.
+
 ## Hidden-Evaluator Hardening
 
 Stress-test these cases before the final submission:
@@ -253,8 +360,8 @@ Stress-test these cases before the final submission:
 - rare room labels
 - rooms smaller than the rasterization resolution
 - invalid polygon orientation
-- generated sites outside the outline
-- disconnected clipped cells
+- generated room boxes lying partly or wholly outside the outline
+- disconnected clipped rooms
 - outlines whose buffer operation creates slivers
 
 ## Execution Timeline
@@ -269,11 +376,12 @@ Stress-test these cases before the final submission:
 
 ### Hours 2-6: Geometry-First Baseline
 
-- Implement preprocessing.
-- Implement vectorizer from room tokens to clipped polygons.
+- Implement preprocessing (including absolute-scale conditioning scalars).
+- Implement encode/decode for the box representation plus the validity-repair
+  layer (snap, clip, resolve overlaps/gaps).
 - Build heuristic token baseline from real room-count/type/area distributions.
 - Create `generate(outline)` with deterministic seed control.
-- Build validity metrics and visual panels.
+- Build validity metrics, the script-matching rasteriser, and visual panels.
 
 Milestone: valid vector partitions for arbitrary outlines before any neural
 model is trained.
@@ -283,12 +391,14 @@ finish a correct vector API, evaluator, and demo skeleton first.
 
 ### Hours 6-10: Oracle Reconstruction Gate
 
-- Encode real layouts into room tokens and wall controls.
-- Reconstruct with the deterministic vectorizer only.
+- Encode real layouts into the box representation (fit boxes to real rooms).
+- Reconstruct with the deterministic repair layer only.
 - Compare original vs reconstructed layouts visually and with IoU/boundary/local
   FID checks.
-- Decide whether to keep rectilinear cells, switch to slicing-tree/wall-line
-  representation, or use Manhattan-constrained power cells.
+- Decide whether boxes suffice, or escalate to corner sequences; treat
+  Voronoi/slicing as a last resort and re-check rule alignment first.
+- Start a small fixed-slot model training run as soon as the representation
+  passes, overlapping with remaining gate work.
 
 Go/no-go: if oracle reconstruction looks unlike real architecture by hour 10,
 freeze neural work and repair the representation.
@@ -342,8 +452,8 @@ clarity, and submission packaging.
 ### FID
 
 - Match hidden raster appearance as closely as possible.
-- Avoid visual artifacts through geometry-valid vectorization.
-- Prefer rectilinear architectural partitions over generic cell diagrams.
+- Avoid visual artifacts through direct geometry plus validity repair.
+- Prefer rectilinear architectural rooms over generic cell diagrams.
 - Use area/type/adjoining-room priors to stay on-distribution.
 
 ### Density
@@ -368,23 +478,24 @@ clarity, and submission packaging.
 
 ### Architecture: 25%
 
-- Separate data, model, vectorizer, evaluator, and demo.
-- Keep the vectorizer deterministic and the generator generative.
+- Separate data, representation/repair layer, model, evaluator, and demo.
+- Keep the repair layer deterministic and the geometry generative.
 - Make assumptions explicit.
 
 ### Challenge Alignment: 25%
 
 - Output vector polygons, not masks.
 - Use diffusion or flow matching.
-- Make the trained model responsible for count, labels, sites, areas, and wall
-  controls.
+- Make the trained model responsible for room count, labels, and the actual room
+  geometry (box corners / corner sequences); restrict deterministic code to
+  validity repair so the partition is not rule-based.
 - Train from scratch.
 - Seed all data/training/sampling/evaluation paths with `42`.
 
 ### Innovation: 20%
 
-- Valid-by-construction architectural partition layer with an oracle
-  reconstruction gate.
+- Direct vector geometry generation with a deterministic validity-repair layer,
+  gated by an oracle reconstruction check before training.
 - Distribution-aware sample ranking.
 - Diversity controls in the demo.
 - Honest local metric harness.
@@ -396,23 +507,35 @@ clarity, and submission packaging.
 | Hidden evaluator differs from local metrics | Ask for harness; keep rasterization configurable; optimize geometry validity and distribution stats that transfer. |
 | Model training underperforms in hackathon time | Ship the trained small flow/diffusion model as the official generator; use the heuristic sampler only as a baseline or demo ablation unless approved. |
 | Generated layouts collapse | Track coverage, sample entropy, room-count diversity, and show multiple samples per outline. |
-| Invalid polygons hurt score | Use partition-by-construction vectorizer and validation tests. |
+| Invalid polygons hurt score | Generate geometry directly, then apply the deterministic validity-repair layer and validation tests. |
 | Room labels are noisy | Preserve expected challenge labels at output; collapse rare labels internally only with an explicit mapping back to the official taxonomy. |
 | Post-processing rules questioned | Keep generator central, document deterministic geometry layer, provide unranked mode. |
-| Representation reconstructs real plans poorly | Run oracle reconstruction before training and switch representation if needed. |
+| Deterministic layer seen as a rule-based partitioner (violates the rules, hurts alignment 25%) | Generate room geometry directly (boxes/corner sequences); restrict the deterministic layer to validity repair only; document the boundary; avoid Voronoi/power-diagram shape generation. |
+| Representation reconstructs real plans poorly | Run oracle reconstruction before training; start with boxes, escalate to corner sequences, only then alternative partitions. |
+| Rasterisation colouring unknown flips the strategy | Mirror the provided script as the default rasteriser; keep it config-swappable; ask organisers whether colour is by type, per-room, or binary. |
+| Live demo / weights / session-branch logistics slip late | Decide host, weight distribution (LFS), and `entire/checkpoints/v1` on day one; build the deploy path early. |
 
 ## Organizer Questions
 
 Ask these before implementation choices harden:
 
-1. Can you share the exact local evaluation harness or rasterization settings
-   used before FID, density, and coverage?
-2. What are the most common ways a generated layout gets penalized or rejected?
-3. Is the score driven more by semantic room labels, geometric partition realism,
-   or matching the outline perfectly?
-4. Are deterministic post-processing, geometry repair, and sample ranking allowed
-   after diffusion or flow sampling?
-5. What hidden-test-set edge cases should we expect: irregular outlines, holes,
+1. Can you share the exact rasterisation used before FID/density/coverage? In
+   particular: are rooms coloured by **room type** (fixed palette), coloured
+   arbitrarily per room, or rendered as binary occupancy? What resolution,
+   padding, fill, and line width? (This determines whether room *type* affects
+   the score at all.)
+2. How many samples does the harness draw per outline, and how is seed `42`
+   applied across that sample count — one seed for the whole run with distinct
+   successive draws, or re-seeded per sample?
+3. What exact return shape does `generate(outline)` need (list of dicts, GeoJSON
+   FeatureCollection, GeoDataFrame, list of WKT+label)?
+4. What are the most common ways a generated layout gets penalised or rejected?
+5. Is the score driven more by semantic room labels, geometric partition
+   realism, or matching the outline perfectly?
+6. Are deterministic post-processing, geometry repair, and sample ranking
+   allowed after diffusion or flow sampling? Where is the line between allowed
+   "validity repair" and a disallowed "rule-based partitioner"?
+7. What hidden-test-set edge cases should we expect: irregular outlines, holes,
    tiny apartments, rare room types, or unusual room counts?
 
 ## Definition of Done
