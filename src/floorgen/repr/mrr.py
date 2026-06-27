@@ -297,13 +297,6 @@ def _iter_polygons(geom: BaseGeometry) -> Iterable[Polygon]:
             yield from _iter_polygons(g)
 
 
-def _largest_polygon(geom: BaseGeometry) -> Polygon:
-    polys = list(_iter_polygons(geom))
-    if not polys:
-        return geom if isinstance(geom, Polygon) else Polygon()
-    return max(polys, key=lambda p: p.area)
-
-
 def _merge_room_piece(rooms: list[tuple[Polygon, int]], idx: int, piece: Polygon) -> None:
     poly, label = rooms[idx]
     parts = sorted(
