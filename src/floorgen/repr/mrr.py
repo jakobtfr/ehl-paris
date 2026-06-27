@@ -32,6 +32,15 @@ class RepairRejected(ValueError):
     """Raised when repair would need to invent too much layout geometry."""
 
 
+@dataclass(frozen=True)
+class PartitionAccounting:
+    """Area fractions that describe partition validity against an outline."""
+
+    overlap_frac: float
+    gap_frac: float
+    outside_frac: float
+
+
 @dataclass
 class RoomMRR:
     """One room as a minimum rotated rectangle plus a label."""
@@ -144,6 +153,30 @@ def encode_decode_iou(poly: Polygon, label_idx: int = 0) -> float:
     if poly.is_empty or poly.area <= 0:
         return 0.0
     return geometry_iou(poly, polygon_to_mrr(poly, label_idx).to_polygon())
+
+
+def partition_accounting(
+    parts: list[tuple[BaseGeometry, int]],
+    outline: BaseGeometry,
+) -> PartitionAccounting:
+    """Compute overlap, gap, and outside-outline fractions for room parts."""
+
+    outline_area = outline.area if outline.area > 0 else 1.0
+    polys = [poly for poly, _ in parts if not poly.is_empty and poly.area > 0]
+    if not polys:
+        return PartitionAccounting(
+            overlap_frac=0.0,
+            gap_frac=float(outline.area / outline_area),
+            outside_frac=0.0,
+        )
+
+    union = unary_union(polys)
+    overlap = max(sum(poly.area for poly in polys) - union.area, 0.0)
+    return PartitionAccounting(
+        overlap_frac=float(overlap / outline_area),
+        gap_frac=float(outline.difference(union).area / outline_area),
+        outside_frac=float(union.difference(outline).area / outline_area),
+    )
 
 
 def mrrs_to_array(mrrs: list[RoomMRR]) -> np.ndarray:
