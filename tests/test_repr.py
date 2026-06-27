@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import math
 
+import pytest
 from shapely import affinity
 from shapely.geometry import MultiPolygon, box
 
 from floorgen.repr.mrr import (
+    RepairRejected,
     RoomMRR,
     array_to_mrrs,
     mrrs_to_array,
@@ -69,6 +71,30 @@ def test_repair_contains_and_partitions():
         assert p.difference(outline.buffer(1e-6)).area < 1e-6
     assert total <= outline.area * 1.001
     assert total >= outline.area * 0.8
+
+
+def test_repair_rejects_large_overlap_with_limit_in_message():
+    outline = box(0, 0, 10, 10)
+    mrrs = [
+        RoomMRR(5, 5, 10, 10, 0.0, 0),
+        RoomMRR(5, 5, 10, 10, 0.0, 7),
+    ]
+
+    with pytest.raises(
+        RepairRejected,
+        match=r"overlap repair too large: 1\.000 > 0\.250",
+    ):
+        repair_partition(mrrs, outline)
+
+
+def test_repair_rejects_large_gap_with_limit_in_message():
+    outline = box(0, 0, 10, 10)
+
+    with pytest.raises(
+        RepairRejected,
+        match=r"gap repair too large: 0\.500 > 0\.120",
+    ):
+        repair_partition([RoomMRR(2.5, 5, 5, 10, 0.0, 0)], outline)
 
 
 def test_repair_keeps_accepted_disconnected_gap_piece():

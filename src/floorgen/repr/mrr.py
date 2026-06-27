@@ -173,7 +173,9 @@ def repair_partition(
     clipped_union = unary_union([poly for poly, _ in clipped])
     overlap_frac = max(sum(poly.area for poly, _ in clipped) - clipped_union.area, 0.0) / outline_area
     if reject_large_repairs and overlap_frac > max_overlap_frac:
-        raise RepairRejected(f"overlap repair too large: {overlap_frac:.3f}")
+        raise RepairRejected(
+            f"overlap repair too large: {overlap_frac:.3f} > {max_overlap_frac:.3f}"
+        )
 
     clipped.sort(key=lambda t: t[0].area, reverse=True)
     claimed: BaseGeometry | None = None
@@ -192,7 +194,9 @@ def repair_partition(
     gap = outline.difference(covered)
     gap_frac = gap.area / outline_area if not gap.is_empty else 0.0
     if reject_large_repairs and gap_frac > max_gap_frac:
-        raise RepairRejected(f"gap repair too large: {gap_frac:.3f}")
+        raise RepairRejected(
+            f"gap repair too large: {gap_frac:.3f} > {max_gap_frac:.3f}"
+        )
 
     if not gap.is_empty and gap.area > 0:
         for piece in _iter_polygons(gap):
