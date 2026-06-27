@@ -32,20 +32,51 @@ REQUIRED_COLS = {
 }
 
 
-def _load(csv_path: Path) -> Any:
-    import geopandas as gpd
-    import pandas as pd
+def _try_load_wkt(value: Any) -> Any:
+    """Parse one WKT cell, returning None for anything unusable.
+
+    A non-string (NaN/None), unparseable WKT, or empty geometry yields None so a
+    single bad row never aborts the whole load. Real parse failures are surfaced
+    as a count by :func:`parse_area_geometries`, not silently swallowed.
+    """
     from shapely import wkt
+
+    if not isinstance(value, str):
+        return None
+    try:
+        g = wkt.loads(value)
+    except Exception:
+        return None
+    return None if (g is None or g.is_empty) else g
+
+
+def parse_area_geometries(df: Any) -> tuple[Any, int]:
+    """Validate schema, keep ``entity_type == "area"`` rows, parse geometries.
+
+    Returns ``(gdf, n_invalid)`` where ``n_invalid`` counts area rows whose
+    geometry could not be parsed (or was empty) and were dropped.
+    """
+    import geopandas as gpd
+
+    missing = sorted(REQUIRED_COLS - set(df.columns))
+    if missing:
+        raise ValueError(f"CSV missing columns: {missing}")
+    area = df[df["entity_type"] == "area"].copy()
+    parsed = area["geom"].apply(_try_load_wkt)
+    valid = parsed.notna()
+    n_invalid = int((~valid).sum())
+    area = area.loc[valid].copy()
+    area["geom"] = parsed[valid]
+    return gpd.GeoDataFrame(area, geometry="geom"), n_invalid
+
+
+def _load(csv_path: Path) -> tuple[Any, int]:
+    import pandas as pd
 
     if not csv_path.exists():
         raise FileNotFoundError(f"MSD CSV not found: {csv_path}. Set MSD_CSV_PATH.")
     df = pd.read_csv(csv_path)
-    missing = sorted(REQUIRED_COLS - set(df.columns))
-    if missing:
-        raise ValueError(f"CSV missing columns: {missing}")
-    df = df[df["entity_type"] == "area"].copy()
-    df["geom"] = df["geom"].apply(wkt.loads)
-    return gpd.GeoDataFrame(df, geometry="geom")
+    return parse_area_geometries(df)
 
 
 def build_records(gdf: Any, limit_units: int = 0) -> tuple[list[dict], int, Counter]:
@@ -121,7 +152,8 @@ def split_by_plan(records: list[dict], val_frac: float = 0.15, seed: int = SEED)
 
 def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
                   reports_dir: Path, skipped: int,
-                  unmapped: Counter | None = None) -> None:
+                  unmapped: Counter | None = None,
+                  n_invalid_geom: int = 0) -> None:
     import pandas as pd
 
     unmapped = unmapped or Counter()
@@ -159,6 +191,7 @@ def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
     report = {
         "n_units": len(records),
         "n_skipped": skipped,
+        "n_invalid_geom_rows": int(n_invalid_geom),
         "n_plans": int(manifest["plan_id"].nunique()),
         "n_floors": int(manifest["floor_id"].nunique()),
         "split_counts": manifest["split"].value_counts().to_dict(),
@@ -194,13 +227,14 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     seed_everything(SEED)
-    gdf = _load(args.csv)
+    gdf, n_invalid_geom = _load(args.csv)
     records, skipped, unmapped = build_records(gdf, limit_units=args.limit_units)
     if not records:
         print("error: no usable units produced.")
         return 1
     split = split_by_plan(records, val_frac=args.val_frac, seed=SEED)
-    write_outputs(records, split, args.out, args.reports, skipped, unmapped)
+    write_outputs(records, split, args.out, args.reports, skipped, unmapped,
+                  n_invalid_geom=n_invalid_geom)
     return 0
 
 
