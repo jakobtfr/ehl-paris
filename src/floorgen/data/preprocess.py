@@ -201,7 +201,8 @@ def split_summary(records: list[dict], split: dict[int, str]) -> dict[str, Any]:
 def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
                   reports_dir: Path, skipped: int,
                   unmapped: Counter | None = None,
-                  n_invalid_geom: int = 0) -> None:
+                  n_invalid_geom: int = 0,
+                  n_area_rows_no_unit: int = 0) -> None:
     import pandas as pd
 
     unmapped = unmapped or Counter()
@@ -240,6 +241,7 @@ def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
         "n_units": len(records),
         "n_skipped": skipped,
         "n_invalid_geom_rows": int(n_invalid_geom),
+        "n_area_rows_no_unit": int(n_area_rows_no_unit),
         "n_plans": int(manifest["plan_id"].nunique()),
         "n_floors": int(manifest["floor_id"].nunique()),
         "split_counts": manifest["split"].value_counts().to_dict(),
@@ -278,13 +280,15 @@ def main() -> int:
     args = parse_args()
     seed_everything(SEED)
     gdf, n_invalid_geom = _load(args.csv)
+    n_area_rows_no_unit = int(gdf["unit_id"].isna().sum())
     records, skipped, unmapped = build_records(gdf, limit_units=args.limit_units)
     if not records:
         print("error: no usable units produced.")
         return 1
     split = split_by_plan(records, val_frac=args.val_frac, seed=SEED)
     write_outputs(records, split, args.out, args.reports, skipped, unmapped,
-                  n_invalid_geom=n_invalid_geom)
+                  n_invalid_geom=n_invalid_geom,
+                  n_area_rows_no_unit=n_area_rows_no_unit)
     return 0
 
 

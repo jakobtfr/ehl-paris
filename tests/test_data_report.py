@@ -43,6 +43,8 @@ def _write_csv(path):
         _row("NOT WKT AT ALL", 4, 300, 3000, "BEDROOM", "Bedroom"),
         # a non-area row -> filtered out entirely
         _row(_sq(0, 0), 5, 100, 1000, "WALL", "Wall", etype="wall"),
+        # a valid area polygon with no unit_id -> dropped from unit grouping, counted
+        _row(_sq(50, 0), "", 400, 4000, "BEDROOM", "Bedroom"),
     ]
     pd.DataFrame(rows).to_csv(path, index=False)
 
@@ -74,6 +76,12 @@ def test_report_counts_units_skips_and_invalid(tmp_path, monkeypatch):
     assert report["n_units"] == 2
     assert report["n_skipped"] == 1          # unit 3, single room
     assert report["n_invalid_geom_rows"] == 1  # unit 4, malformed WKT
+
+
+def test_report_counts_area_rows_without_unit_id(tmp_path, monkeypatch):
+    _, _, report = _run(tmp_path, monkeypatch)
+    # The blank-unit_id area polygon is dropped from grouping but reported.
+    assert report["n_area_rows_no_unit"] == 1
 
 
 def test_report_flags_unmapped_labels(tmp_path, monkeypatch):
