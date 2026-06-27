@@ -112,3 +112,35 @@ def render_layout(
     img = buf.reshape(fig.canvas.get_width_height()[::-1] + (4,))[:, :, :3].copy()
     plt.close(fig)
     return img
+
+
+def render_batch(
+    layouts: list[list[tuple[BaseGeometry, int]]],
+    outline: BaseGeometry,
+    cfg: RenderConfig | None = None,
+) -> np.ndarray:
+    """Render multiple layouts to a (N, size, size, 3) uint8 stack.
+
+    Suitable for direct input to compute_fid / inception_features.
+    """
+    imgs = [render_layout(rooms, outline, cfg=cfg) for rooms in layouts]
+    return np.stack(imgs, axis=0)
+
+
+def save_render(
+    img: np.ndarray,
+    path: str | Any,
+    *,
+    format: str = "png",
+) -> None:
+    """Save a rendered image array to disk."""
+    from pathlib import Path as _Path
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    out = _Path(path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    plt.imsave(str(out), img, format=format)
+

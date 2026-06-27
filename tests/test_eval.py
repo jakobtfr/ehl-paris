@@ -166,3 +166,32 @@ class TestLazyImports:
         import importlib
         mod = importlib.import_module("floorgen.eval.prdc")
         assert hasattr(mod, "compute_prdc")
+
+
+# ---------------------------------------------------------------------------
+# render_batch and save_render tests
+# ---------------------------------------------------------------------------
+class TestRenderBatch:
+    def test_batch_shape(self, simple_rooms, simple_outline):
+        from floorgen.eval.render import render_batch
+
+        layouts = [simple_rooms, simple_rooms, simple_rooms]
+        stack = render_batch(layouts, simple_outline)
+        assert stack.shape == (3, 512, 512, 3)
+        assert stack.dtype == np.uint8
+
+    def test_batch_custom_size(self, simple_rooms, simple_outline):
+        from floorgen.eval.render import render_batch
+
+        cfg = RenderConfig(size=128)
+        stack = render_batch([simple_rooms], simple_outline, cfg=cfg)
+        assert stack.shape == (1, 128, 128, 3)
+
+    def test_save_render(self, simple_rooms, simple_outline, tmp_path):
+        from floorgen.eval.render import save_render
+
+        img = render_layout(simple_rooms, simple_outline)
+        out_path = tmp_path / "test_render.png"
+        save_render(img, out_path)
+        assert out_path.exists()
+        assert out_path.stat().st_size > 100

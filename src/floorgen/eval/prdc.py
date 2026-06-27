@@ -12,11 +12,16 @@ Generative Models" (ICML 2020).
 from __future__ import annotations
 
 import numpy as np
-from sklearn.metrics import pairwise_distances
 
 
 def _pairwise(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-    return pairwise_distances(a, b, metric="euclidean", n_jobs=-1)
+    """Euclidean pairwise distances; uses sklearn when available, fallback to numpy."""
+    try:
+        from sklearn.metrics import pairwise_distances
+        return pairwise_distances(a, b, metric="euclidean", n_jobs=-1)
+    except ImportError:
+        diff = a[:, None, :] - b[None, :, :]
+        return np.sqrt((diff * diff).sum(axis=-1))
 
 
 def _knn_radii(features: np.ndarray, k: int) -> np.ndarray:
