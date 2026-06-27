@@ -43,6 +43,20 @@ class RoomMRR:
     angle: float
     label_idx: int
 
+    def __post_init__(self) -> None:
+        self.cx = float(self.cx)
+        self.cy = float(self.cy)
+        w = max(float(self.w), 0.0)
+        h = max(float(self.h), 0.0)
+        angle = float(self.angle)
+        if h > w:
+            w, h = h, w
+            angle += math.pi / 2.0
+        self.w = w
+        self.h = h
+        self.angle = canonical_angle(angle)
+        self.label_idx = int(round(self.label_idx))
+
     @property
     def label(self) -> str:
         return ROOM_NAMES[self.label_idx]
@@ -115,10 +129,10 @@ def array_to_mrrs(arr: np.ndarray) -> list[RoomMRR]:
         RoomMRR(
             cx=float(r[0]),
             cy=float(r[1]),
-            w=max(float(r[2]), 0.0),
-            h=max(float(r[3]), 0.0),
-            angle=canonical_angle(float(r[4])),
-            label_idx=int(round(r[5])),
+            w=float(r[2]),
+            h=float(r[3]),
+            angle=float(r[4]),
+            label_idx=float(r[5]),
         )
         for r in arr
     ]

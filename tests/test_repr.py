@@ -31,6 +31,21 @@ def test_angle_distance_wraps_modulo_pi():
     assert wrapped_angle_distance(math.pi / 2 - 0.01, -math.pi / 2 + 0.01) < 0.03
 
 
+def test_room_mrr_canonicalizes_dimensions_without_changing_geometry():
+    raw = affinity.translate(
+        affinity.rotate(box(-1, -3, 1, 3), 0.35, origin=(0, 0), use_radians=True),
+        xoff=5,
+        yoff=-2,
+    )
+
+    mrr = RoomMRR(5, -2, 2, 6, 0.35, 1)
+
+    assert mrr.w == 6
+    assert mrr.h == 2
+    assert wrapped_angle_distance(mrr.angle, 0.35 + math.pi / 2) < 1e-9
+    assert mrr.to_polygon().symmetric_difference(raw).area < 1e-9
+
+
 def test_array_roundtrip():
     mrrs = [RoomMRR(1, 1, 2, 2, 0.2, 0), RoomMRR(5, 5, 3, 1, -0.4, 4)]
     arr = mrrs_to_array(mrrs)
