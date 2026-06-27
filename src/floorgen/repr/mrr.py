@@ -191,6 +191,16 @@ def mrrs_to_array(mrrs: list[RoomMRR]) -> np.ndarray:
 
 
 def array_to_mrrs(arr: np.ndarray) -> list[RoomMRR]:
+    arr = np.asarray(arr)
+    if arr.size == 0:
+        return []
+    if arr.ndim == 1:
+        if arr.shape[0] != 6:
+            raise ValueError(f"MRR array must have shape (N, 6), got {arr.shape}")
+        arr = arr.reshape(1, 6)
+    if arr.ndim != 2 or arr.shape[1] != 6:
+        raise ValueError(f"MRR array must have shape (N, 6), got {arr.shape}")
+
     return [
         RoomMRR(
             cx=float(r[0]),

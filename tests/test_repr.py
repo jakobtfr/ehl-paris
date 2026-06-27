@@ -63,6 +63,22 @@ def test_array_roundtrip():
         assert wrapped_angle_distance(a.angle, b.angle) < 1e-6
 
 
+def test_array_decode_accepts_single_token_and_rejects_bad_shapes():
+    one = array_to_mrrs(np.array([1, 2, 3, 1, 0.2, 4], dtype=np.float32))
+
+    assert len(one) == 1
+    assert (one[0].cx, one[0].cy, one[0].w, one[0].h, one[0].label_idx) == (
+        1,
+        2,
+        3,
+        1,
+        4,
+    )
+
+    with pytest.raises(ValueError, match=r"shape \(N, 6\)"):
+        array_to_mrrs(np.zeros((2, 5), dtype=np.float32))
+
+
 def test_array_decode_clamps_label_indices_to_taxonomy():
     arr = np.array(
         [
