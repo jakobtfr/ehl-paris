@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Reproducibility. The challenge fixes seed 42 across data handling, training,
-# sampling, and evaluation.
+# Reproducibility. The final submission seed is documented through config; 42 is
+# the local default for repeatable development runs.
 # ---------------------------------------------------------------------------
 SEED = 42
 
@@ -26,6 +26,9 @@ WALL_BRIDGE_DISTANCE_M = 0.3
 SNAP_TOL_M = 0.05          # snap room edges to each other / to the outline
 MIN_ROOM_AREA_M2 = 0.5     # rooms smaller than this are slivers -> merge away
 PARTITION_AREA_TOL = 0.02  # fractional area mismatch allowed for "partitions outline"
+MAX_REPAIR_GAP_FRAC = 0.12
+MAX_REPAIR_OVERLAP_FRAC = 0.25
+MODEL_SPACE_SIZE = 256.0
 
 # ---------------------------------------------------------------------------
 # Room-type taxonomy. Anchored on the MSD `roomtype` column values actually
@@ -74,9 +77,9 @@ SUBTYPE_TO_ROOM: dict[str, str] = {
     "VOID": "Structure",
 }
 
-# Fixed number of room slots for the primary fixed-slot generative model.
-# Observed rooms-per-unit: median ~10, max ~25. K=24 covers nearly all units
-# while keeping the model small; presence logits handle variable counts.
+# Fixed number of room slots for the primary fixed-slot generative model. The
+# value should be set from the processed room-count distribution before training;
+# presence logits handle variable counts.
 MAX_ROOMS_K = 24
 
 

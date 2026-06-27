@@ -14,6 +14,7 @@ code consumes those arrays.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, cast
 
 import numpy as np
 from shapely.geometry import MultiPolygon, Polygon
@@ -43,7 +44,7 @@ class RenderConfig:
     """Rasterisation settings. Defaults mirror MSD ``plot.py`` conventions; set
     to the organiser wrapper's exact values once known."""
 
-    size: int = 256          # output is size x size
+    size: int = 512          # output is size x size
     pad_frac: float = 0.02   # padding around the layout, fraction of extent
     edge_width: int = 1      # black room edge thickness in px (0 to disable)
     bg: tuple[int, int, int] = (255, 255, 255)
@@ -87,12 +88,12 @@ def render_layout(
     dpi = 100
     figsize = cfg.size / dpi
     fig = plt.figure(figsize=(figsize, figsize), dpi=dpi)
-    ax = fig.add_axes([0, 0, 1, 1])
+    ax = fig.add_axes((0.0, 0.0, 1.0, 1.0))
     ax.set_xlim(x0, x1)
     ax.set_ylim(y0, y1)
     ax.set_aspect("equal")
     ax.axis("off")
-    fig.patch.set_facecolor(tuple(c / 255 for c in cfg.bg))
+    fig.patch.set_facecolor((cfg.bg[0] / 255, cfg.bg[1] / 255, cfg.bg[2] / 255))
 
     for geom, label_idx in rooms:
         name = ROOM_NAMES[label_idx] if 0 <= label_idx < len(ROOM_NAMES) else "Structure"
@@ -107,7 +108,7 @@ def render_layout(
             ))
 
     fig.canvas.draw()
-    buf = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
+    buf = np.frombuffer(cast(Any, fig.canvas).buffer_rgba(), dtype=np.uint8)
     img = buf.reshape(fig.canvas.get_width_height()[::-1] + (4,))[:, :, :3].copy()
     plt.close(fig)
     return img

@@ -8,7 +8,8 @@ submitted as the scored generator.
 
 It samples a room count and a label multiset from the empirical MSD
 distribution, lays rooms out by recursively slicing the outline's bounding box,
-fits boxes, then hands off to the same validity-repair layer the model uses.
+emits axis-aligned MRR tokens, then hands off to the same validity-repair layer
+the model uses.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import numpy as np
 from shapely.geometry.base import BaseGeometry
 
 from .config import MAX_ROOMS_K, ROOM_NAME_TO_IDX
-from .repr.boxes import RoomBox
+from .repr.mrr import RoomMRR
 
 # Empirical priors from the MSD dev subset (label -> rough frequency). Replace
 # with values learned in preprocessing for the full run.
@@ -40,11 +41,13 @@ def _sample_labels(n: int, rng: np.random.Generator) -> list[int]:
     return [ROOM_NAME_TO_IDX[p] for p in picks]
 
 
-def _slice_boxes(outline: BaseGeometry, labels: list[int],
-                 rng: np.random.Generator) -> list[RoomBox]:
-    """Recursively split the outline bbox into len(labels) cells; emit a box per
-    cell. Deterministic given the rng. This is baseline scaffolding -- the model
-    replaces this with learned geometry."""
+def _slice_mrrs(outline: BaseGeometry, labels: list[int],
+                rng: np.random.Generator) -> list[RoomMRR]:
+    """Recursively split the outline bbox into cells and emit MRR tokens.
+
+    Deterministic given the rng. This is baseline scaffolding; the model replaces
+    it with learned 5D MRR geometry.
+    """
     minx, miny, maxx, maxy = outline.bounds
     cells = [(minx, miny, maxx, maxy)]
     while len(cells) < len(labels):
@@ -59,16 +62,22 @@ def _slice_boxes(outline: BaseGeometry, labels: list[int],
             ym = y0 + (y1 - y0) * frac
             cells += [(x0, y0, x1, ym), (x0, ym, x1, y1)]
 
-    boxes = []
+    mrrs = []
     for (x0, y0, x1, y1), lab in zip(cells, labels):
-        boxes.append(RoomBox(cx=(x0 + x1) / 2, cy=(y0 + y1) / 2,
-                             w=x1 - x0, h=y1 - y0, label_idx=lab))
-    return boxes
+        mrrs.append(RoomMRR(
+            cx=(x0 + x1) / 2,
+            cy=(y0 + y1) / 2,
+            w=x1 - x0,
+            h=y1 - y0,
+            angle=0.0,
+            label_idx=lab,
+        ))
+    return mrrs
 
 
-def baseline_sample(outline: BaseGeometry, rng: np.random.Generator) -> list[RoomBox]:
+def baseline_sample(outline: BaseGeometry, rng: np.random.Generator) -> list[RoomMRR]:
     # room count scales with outline area, clamped to model slot budget
     area = outline.area
     n = int(np.clip(round(3 + area / 14.0), 4, MAX_ROOMS_K))
     labels = _sample_labels(n, rng)
-    return _slice_boxes(outline, labels, rng)
+    return _slice_mrrs(outline, labels, rng)

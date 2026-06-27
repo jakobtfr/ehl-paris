@@ -12,15 +12,16 @@ seam in `generate.py`.
 
 ## Approach
 
-The model emits room **geometry directly** as axis-aligned boxes
-(`cx, cy, w, h, type, presence`); a deterministic layer only **repairs
-validity** (clip to outline, resolve overlaps/gaps, drop slivers). The model —
-not a rule — decides room count, type, and shape, which keeps us clear of the
-"no rule-based partitioner" constraint while guaranteeing clean vector output.
+The model emits room **geometry directly** as minimum rotated rectangles
+(`cx, cy, w, h, angle, type, presence`); a deterministic layer only **repairs
+validity** (clip to outline, resolve overlaps, fill only thresholded slivers,
+drop slivers). The model — not a rule — decides room count, type, and shape,
+which keeps us clear of the "no rule-based partitioner" constraint while
+guaranteeing clean vector output.
 
-An **oracle reconstruction gate** proves the box representation can reconstruct
-real plans before any training (current dev result: mean IoU **0.56**, area
-outside outline **~0%**, area error **2.5%**).
+An **oracle reconstruction gate** proves the MRR representation can reconstruct
+real plans before full training. Axis-aligned boxes remain a fallback/debug
+representation only.
 
 ## Layout
 
@@ -30,11 +31,12 @@ src/floorgen/
   seeding.py           seed_everything(42)
   data/
     outline.py         outline construction (buffer 0.3 / union / -0.3); labels
-    normalize.py       unit-area shape norm + absolute-scale conditioning scalars
+    normalize.py       256/max-delta model-space norm + scale conditioning
     preprocess.py      CSV -> per-unit records + leakage-safe split + report
   repr/
-    boxes.py           box encode/decode + deterministic validity-repair layer
-    oracle_gate.py     box-reconstruction gate (go/no-go before training)
+    mrr.py             MRR encode/decode + deterministic validity-repair layer
+    boxes.py           axis-aligned fallback representation
+    oracle_gate.py     MRR reconstruction gate (go/no-go before training)
   eval/
     render.py          MSD-parity rasteriser (torch-free)
     prdc.py            density/coverage (vendored clovaai PRDC, numpy-only)
@@ -74,15 +76,16 @@ pytest -q && ruff check src tests
 
 ## Wiring in the trained model
 
-Implement a sampler `model_sample(outline, rng) -> list[RoomBox]` and set
+Implement a sampler `model_sample(outline, rng) -> list[RoomMRR]` and set
 `floorgen.generate.GENERATOR = model_sample`. The repair layer, evaluator,
-contract tests, and `generate(outline)` signature stay unchanged. Everything is
-seeded with **42** across data, sampling, and evaluation.
+contract tests, and `generate(outline)` signature stay unchanged. Record the
+generation seed, candidate count, ranking/filtering method, checkpoint, and
+config hash for submitted outputs.
 
 ## Notes / open items
 
 - The exact MSD `plot.py` wrapper (image size, palette, whether graph
   nodes/edges are drawn) is configurable in `eval/render.py::RenderConfig`;
   set to organiser parity once confirmed.
-- Box representation absorbs some small / L-shaped rooms (dev retention ~84%);
-  corner-sequence tokens are the documented stretch if higher fidelity is needed.
+- MRRs still compress L-shaped rooms; corner-sequence tokens are the documented
+  stretch if the oracle gate shows MRR fidelity is not enough.

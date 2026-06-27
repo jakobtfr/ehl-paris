@@ -20,10 +20,10 @@ from shapely.geometry.base import BaseGeometry
 from .baseline import baseline_sample
 from .config import ROOM_NAMES, SEED
 from .data.outline import largest_shell
-from .repr.boxes import repair_partition
+from .repr.mrr import RepairRejected, repair_partition
 from .seeding import seed_everything
 
-# A generator backend maps (outline, rng) -> list[RoomBox]. The model trainer
+# A generator backend maps (outline, rng) -> list[RoomMRR]. The model trainer
 # registers the trained sampler here; until then we use the baseline.
 GENERATOR: Callable[[BaseGeometry, np.random.Generator], list] = baseline_sample
 
@@ -61,8 +61,18 @@ def sample_layouts(
     rng = np.random.default_rng(seed)
     samples = []
     for _ in range(max(1, n_samples)):
-        boxes = GENERATOR(outline, rng)
-        partition = repair_partition(boxes, outline)
+        partition = []
+        last_error: RepairRejected | None = None
+        for _attempt in range(8):
+            mrrs = GENERATOR(outline, rng)
+            try:
+                partition = repair_partition(mrrs, outline)
+                break
+            except RepairRejected as exc:
+                last_error = exc
+                continue
+        if not partition and last_error is not None:
+            raise last_error
         samples.append(_as_records(partition))
     return samples
 
@@ -70,6 +80,6 @@ def sample_layouts(
 def generate(outline: BaseGeometry) -> list[dict]:
     """Challenge-canonical one-argument entry point.
 
-    Returns the room records for a single deterministic (seed 42) layout.
+    Returns the room records for a single deterministic default-seed layout.
     """
     return sample_layouts(outline, seed=SEED, n_samples=1, mode="raw")[0]

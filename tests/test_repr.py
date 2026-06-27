@@ -1,43 +1,56 @@
-"""Box representation round-trip + repair validity tests."""
+"""MRR representation round-trip + repair validity tests."""
 
 from __future__ import annotations
 
+import math
+
+from shapely import affinity
 from shapely.geometry import box
 
-from floorgen.repr.boxes import (
-    RoomBox,
-    array_to_boxes,
-    boxes_to_array,
-    polygon_to_box,
+from floorgen.repr.mrr import (
+    RoomMRR,
+    array_to_mrrs,
+    mrrs_to_array,
+    polygon_to_mrr,
     repair_partition,
+    wrapped_angle_distance,
 )
 
 
-def test_polygon_to_box_preserves_area():
-    p = box(0, 0, 4, 2)  # area 8
-    b = polygon_to_box(p, label_idx=0)
-    assert abs(b.w * b.h - p.area) < 1e-6
-    assert abs(b.cx - 2) < 1e-6 and abs(b.cy - 1) < 1e-6
+def test_polygon_to_mrr_preserves_rotated_rectangle_geometry():
+    p = affinity.rotate(box(0, 0, 4, 2), 30, origin="centroid")
+    mrr = polygon_to_mrr(p, label_idx=0)
+    decoded = mrr.to_polygon()
+    iou = decoded.intersection(p).area / decoded.union(p).area
+    assert iou > 0.999
+    assert mrr.w >= mrr.h
+
+
+def test_angle_distance_wraps_modulo_pi():
+    assert wrapped_angle_distance(0.0, math.pi) < 1e-9
+    assert wrapped_angle_distance(math.pi / 2 - 0.01, -math.pi / 2 + 0.01) < 0.03
 
 
 def test_array_roundtrip():
-    boxes = [RoomBox(1, 1, 2, 2, 0), RoomBox(5, 5, 3, 1, 4)]
-    arr = boxes_to_array(boxes)
-    assert arr.shape == (2, 5)
-    back = array_to_boxes(arr)
-    for a, b in zip(boxes, back):
+    mrrs = [RoomMRR(1, 1, 2, 2, 0.2, 0), RoomMRR(5, 5, 3, 1, -0.4, 4)]
+    arr = mrrs_to_array(mrrs)
+    assert arr.shape == (2, 6)
+    back = array_to_mrrs(arr)
+    for a, b in zip(mrrs, back):
         assert (a.cx, a.cy, a.w, a.h, a.label_idx) == (b.cx, b.cy, b.w, b.h, b.label_idx)
+        assert wrapped_angle_distance(a.angle, b.angle) < 1e-6
 
 
 def test_repair_contains_and_partitions():
     outline = box(0, 0, 10, 10)
-    boxes = [RoomBox(2.5, 5, 6, 12, 0), RoomBox(7.5, 5, 6, 12, 7)]  # overlapping, overflowing
-    part = repair_partition(boxes, outline)
+    mrrs = [
+        RoomMRR(2.5, 5, 6, 12, 0.0, 0),
+        RoomMRR(7.5, 5, 6, 12, 0.0, 7),
+    ]
+    part = repair_partition(mrrs, outline)
     assert len(part) >= 1
     total = sum(p.area for p, _ in part)
-    # contained
     for p, _ in part:
         assert p.difference(outline.buffer(1e-6)).area < 1e-6
-    # near-complete coverage, no large overlap
     assert total <= outline.area * 1.001
     assert total >= outline.area * 0.8

@@ -1,12 +1,12 @@
 """Oracle reconstruction gate.
 
-Before training any model, prove the box representation can reconstruct real
-floor plans. We encode each real room to its area-equivalent box, run ONLY the
-deterministic repair layer, and compare the result to the original rooms.
+Before training any model, prove the MRR representation can reconstruct real
+floor plans. We encode each real room to its minimum rotated rectangle, run ONLY
+the deterministic repair layer, and compare the result to the original rooms.
 
-If boxes reconstruct real plans poorly, no generative model on top of boxes can
-score well -- escalate to corner sequences instead. This is the plan's hours
-6-10 go/no-go, made measurable.
+If MRRs reconstruct real plans poorly, no generative model on top of MRRs can
+score well -- only then use axis-aligned boxes as a debug fallback or escalate to
+corner sequences. This is the plan's hours 6-10 go/no-go, made measurable.
 
 Metrics (per unit, averaged):
   - per-room IoU between original room and its reconstructed cell (matched by
@@ -27,7 +27,7 @@ from shapely import wkt
 from shapely.geometry import Polygon
 
 from ..config import PATHS
-from .boxes import polygon_to_box, repair_partition
+from .mrr import RepairRejected, polygon_to_mrr, repair_partition
 
 
 def _match_iou(originals: list[tuple[Polygon, int]],
@@ -58,11 +58,18 @@ def _match_iou(originals: list[tuple[Polygon, int]],
 
 def evaluate_units(units: list[dict]) -> dict:
     per_unit = []
+    repair_failures = 0
     for u in units:
         outline = wkt.loads(u["outline_wkt"])
         originals = [(wkt.loads(rm["wkt"]), rm["label_idx"]) for rm in u["rooms"]]
-        boxes = [polygon_to_box(p, lab) for p, lab in originals]
-        recon = repair_partition(boxes, outline)
+        mrrs = [polygon_to_mrr(p, lab) for p, lab in originals]
+        repair_failed = False
+        try:
+            recon = repair_partition(mrrs, outline)
+        except RepairRejected:
+            repair_failed = True
+            repair_failures += 1
+            recon = []
 
         ious = _match_iou(originals, recon)
         recon_area = sum(p.area for p, _ in recon)
@@ -75,6 +82,7 @@ def evaluate_units(units: list[dict]) -> dict:
             "retention": len(recon) / len(originals) if originals else 0.0,
             "area_err": abs(recon_area - outline.area) / outline.area if outline.area else 0.0,
             "outside_frac": outside / outline.area if outline.area else 0.0,
+            "repair_failed": repair_failed,
         })
 
     def agg(key: str) -> float:
@@ -87,12 +95,13 @@ def evaluate_units(units: list[dict]) -> dict:
         "mean_retention": agg("retention"),
         "mean_area_err": agg("area_err"),
         "mean_outside_frac": agg("outside_frac"),
+        "repair_failure_rate": repair_failures / len(per_unit) if per_unit else 0.0,
         "per_unit": per_unit,
     }
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Run the oracle box-reconstruction gate.")
+    p = argparse.ArgumentParser(description="Run the oracle MRR-reconstruction gate.")
     p.add_argument("--units", type=Path,
                    default=PATHS.processed_dir / "units.jsonl")
     p.add_argument("--reports", type=Path, default=PATHS.reports_dir)
@@ -113,9 +122,13 @@ def main() -> int:
     print(json.dumps(summary, indent=2))
 
     # Advisory verdict
-    ok = result["mean_iou"] >= 0.5 and result["mean_outside_frac"] < 0.01
+    ok = (
+        result["mean_iou"] >= 0.65
+        and result["mean_outside_frac"] < 0.01
+        and result["repair_failure_rate"] < 0.05
+    )
     print(f"\nVERDICT: {'PASS' if ok else 'REVIEW'} "
-          f"(boxes {'reconstruct real plans acceptably' if ok else 'may need corner sequences'})")
+          f"(MRRs {'reconstruct real plans acceptably' if ok else 'may need fallback representation review'})")
     return 0
 
 

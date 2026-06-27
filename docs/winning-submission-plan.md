@@ -5,12 +5,12 @@
 Win by building the most evaluation-aligned system, not the fanciest model. The
 challenge rewards a generated distribution of realistic, diverse vector room
 layouts. The highest-ROI strategy is a flow-matching generator that emits room
-**geometry directly** (axis-aligned boxes or ordered corner sequences), plus a
-deterministic layer that only repairs the output into a clean partition, plus a
-metric-aware local evaluator.
+**geometry directly** as minimum rotated rectangles (MRRs), plus a deterministic
+layer that only repairs the output into a clean partition, plus a metric-aware
+local evaluator.
 
 The core idea: the generative model samples the room count, room labels, and the
-actual room geometry (box corners or corner sequences) conditioned on the
+actual room geometry (MRR parameters or corner sequences) conditioned on the
 outline. Keep as much of the geometry generative as possible. Deterministic code
 may only enforce vector validity: snap to the outline, resolve small
 gaps/overlaps, clip outside-outline area, and clean polygons. The deterministic
@@ -18,14 +18,16 @@ layer must not be what decides room *shape* — the challenge forbids a
 "deterministic solver or purely rule-based partitioner", so shape diversity has
 to come from the model.
 
-Default representation: direct geometry. The challenge brief explicitly suggests
-"rectangles or corner sequences" as room representations, and real Swiss rooms
-are rectilinear, so direct boxes/corner sequences rasterize like real plans and
-keep shape generative. Lean on published vector floor-plan generators
-(HouseDiffusion diffuses room corner coordinates; House-GAN++ and the Modified
-Swiss Dwellings baseline are directly relevant) instead of inventing a
-representation from scratch, but adapt them to condition on **outline only** (no
-input room graph), which is the harder setting here.
+Default representation: direct MRR geometry. The challenge brief explicitly
+suggests "rectangles or corner sequences" as room representations, and MSD paper
+results indicate that minimum rotated rectangles are a stronger compression of
+Swiss room polygons than axis-aligned boxes. MRR tokens preserve rotated rooms
+while keeping the denoising problem small: `(cx, cy, w, h, angle)` plus type and
+presence. Lean on published vector floor-plan generators (HouseDiffusion
+diffuses room corner coordinates; House-GAN++ and the Modified Swiss Dwellings
+baseline are directly relevant) instead of inventing the model class from
+scratch, but adapt them to condition on **outline only** (no input room graph),
+which is the harder setting here.
 
 Alternative representations (weighted Voronoi / power diagram, slicing tree,
 wall-line graph) are allowed only if the oracle reconstruction gate proves they
@@ -40,6 +42,9 @@ fail the gate (convex, diagonal cells unlike real plans); do not start there.
   during evaluation.
 - `generate(outline, seed=None, n_samples=1, mode="raw")` returns labelled room
   polygons in the original coordinate system.
+- The submitted checkpoint uses MRR room tokens unless the oracle reconstruction
+  gate proves MRR is not viable, in which case the fallback must be documented
+  with reconstruction evidence.
 - A compatibility wrapper exposes plain `generate(outline)` if the evaluator
   requires the exact one-argument signature.
 - A batch CLI exports all generations for a manifest of test outlines with the
@@ -141,13 +146,26 @@ Build a reproducible MSD preprocessing pipeline:
   buffer back by `-0.3`. Use a compatibility helper that supports both
   GeoPandas/Shapely variants (`GeoSeries.union_all()` where available,
   `unary_union` otherwise).
-- Normalise each plan's *shape* for modelling: translate to origin, scale by
-  square root of outline area, store inverse transform for final output.
-- Crucially, this makes every plan unit-area, which erases absolute scale. Store
-  the pre-normalisation absolute area and bounding-box width/height as separate
-  conditioning scalars, because room count and type mix depend on absolute size
-  (a 30 m² studio vs a 120 m² flat). Without this the count head has no scale
-  signal.
+- Normalise each plan's *shape* for modelling with one explicit transform:
+  translate to a canonical origin, scale coordinates into a stable training box
+  using the MSD image-style scale `256 / max(delta_x, delta_y)`, and store the
+  inverse transform for final output.
+- Keep coordinate spaces separate:
+  - **model space:** normalised coordinates for MRR encode/decode, flow matching,
+    repair thresholds, and optional 256-level grid snapping
+  - **conditioning space:** original metric scalars such as area, bounding-box
+    width/height, perimeter, compactness, aspect ratio, and vertex count
+  - **export space:** original metric coordinates returned by `generate(outline)`
+  - **evaluation space:** MSD-rendered raster images, expected to be `512 x 512`
+    unless the organiser wrapper says otherwise
+- Because coordinate normalisation erases absolute scale, feed pre-normalisation
+  area and bounding-box width/height as conditioning scalars. Room count and type
+  mix depend on real scale; a 30 m² studio and a 120 m² flat can have similar
+  normalised outlines.
+- Inference order is fixed: normalise the input outline into model space, sample
+  MRR/type/presence tokens, decode and repair against the model-space outline,
+  inverse-transform repaired polygons into metric export space, then rasterize
+  the exported vectors for evaluation.
 - Save train/validation splits by `unit_id`, grouped by `plan_id`/`floor_id`
   where possible, with the split seed documented.
 
@@ -183,37 +201,62 @@ rendered by the organiser path without semantic drift:
 
 ### 2. Vector Representation
 
-The model emits room geometry directly. Two candidate parameterisations, in
+The model emits room geometry directly. Three candidate parameterisations, in
 preference order:
 
-1. **Axis-aligned boxes (default).** Each room token is
-   `(cx, cy, w, h, room_type, presence)`. Simple, rectilinear, trivially valid,
-   and a good match for the majority of Swiss rooms. The deterministic layer
-   only snaps edges, resolves small overlaps/gaps, and clips to the outline.
-2. **Ordered corner sequences (stretch).** Each room is a fixed-length sequence
+1. **Minimum rotated rectangles (default).** Each room token is
+   `(cx, cy, w, h, angle, room_type, presence)`. This keeps the continuous
+   geometry small, captures rotated rooms, and should reconstruct MSD room
+   polygons substantially better than axis-aligned boxes.
+2. **Axis-aligned boxes (fallback).** Each room token is
+   `(cx, cy, w, h, room_type, presence)`. Simpler and faster to debug, but lower
+   fidelity on rotated or non-Manhattan rooms.
+3. **Ordered corner sequences (stretch).** Each room is a fixed-length sequence
    of corner coordinates with a stop/presence flag, à la HouseDiffusion. Handles
    L-shaped and non-rectangular rooms; more expressive but harder to keep valid.
 
-Both keep the room *shape* generative, which is what the rules require. Pick (1)
-first; only move to (2) if the oracle gate shows boxes can't reconstruct real
-plans well enough.
+All three keep the room *shape* generative, which is what the rules require.
+Pick (1) first; only move away from MRR if the oracle reconstruction gate shows
+it cannot reconstruct real plans well enough.
+
+MRR encode/decode contract:
+
+- encode each ground-truth room polygon as its Shapely minimum rotated rectangle
+- store `(cx, cy, w, h, angle)` in model space with deterministic angle
+  canonicalisation, positive widths/heights, a fixed width/height ordering rule,
+  and a stable corner order
+- treat rectangle angle as periodic modulo pi: geometry losses and Hungarian
+  matching must use wrapped angular distance, not raw subtraction; if this is
+  unstable, switch the internal model head to `sin(2a), cos(2a)` while preserving
+  the public 5D MRR representation
+- decode MRR tokens back to Shapely polygons before repair and export
+- measure per-room IoU against the original polygon and track a target around
+  the published MRR reconstruction level; low IoU is a representation failure,
+  not a model-training problem
 
 Condition on the outline using:
 
 - resampled boundary points, for example 128 points along the exterior
 - **absolute scale scalars: total area (m²) and bounding-box width/height**, fed
   separately so the count/type heads can use real scale (see normalisation note
-  in the data pipeline — shape is unit-area normalised, so absolute area is
-  otherwise lost)
+  in the data pipeline; model-space coordinates erase absolute size)
 - shape scalars: perimeter, compactness, bounding-box aspect ratio, vertex count
 - optional low-res raster of the outline as a conditioning feature only, never as
   the output
 
 Deterministic validity-repair layer (repair only, not shape generation):
 
-- snap room edges to each other and to the outline within a small tolerance
-- resolve small pairwise overlaps and gaps by clipping/snapping shared edges
-- clip rooms to the input outline
+- decode generated MRRs to polygons, then clip rooms to the model-space outline
+- resolve overlaps largest-first, subtracting already accepted larger rooms from
+  later rooms so dominant generated room area survives; this is a repair
+  priority rule, while rasterisation still draws the final accepted rooms
+  largest-first for MSD parity
+- fill gaps only as deterministic repair: allocate uncovered slivers to nearby
+  accepted rooms with a fixed nearest-boundary or Voronoi-style rule, then log
+  the filled area; if uncovered or overlapping area exceeds the configured
+  sliver threshold, reject/resample instead of partitioning a large region
+- snap coordinates to a 256-level model-space grid at inference when it improves
+  wall alignment without changing room topology
 - merge or drop sub-resolution slivers by a fixed rule, then re-fill the freed
   area to the adjacent room so the partition stays gap-free
 - simplify and validate polygons; assign each polygon its generated room type
@@ -224,22 +267,26 @@ Why this is strong:
 - Vector polygons are produced directly by the model.
 - Room shapes, areas, types, and count are all generative — safe on the
   "no rule-based partitioner" rule.
-- Rectilinear geometry matches real floor plans after rasterization.
+- Rotated-rectangle geometry captures many real floor-plan rooms while staying
+  easier to learn than full polygons.
 - Diversity comes from sampling the model, not from a partition heuristic.
 - The repair layer makes outputs robust under hidden evaluation without taking
   over shape generation.
 
 Oracle reconstruction gate:
 
-- encode real room polygons into the chosen representation (fit boxes / extract
-  corner sequences from real rooms)
+- encode real room polygons into the chosen representation (MRRs first; boxes or
+  corner sequences only if needed)
 - run only the deterministic repair layer
 - rasterize reconstructed layouts beside the original real layouts, **using the
   same rasteriser the evaluator path uses**
 - compute reconstruction IoU, room-area error, boundary error, and local FID
+- count any sliver-threshold repair failure as a representation failure in the
+  oracle report; there is no model resampling path during reconstruction
 - require visual/metric acceptability before model training
-- if the gate fails for boxes, move to corner sequences; if both fail, only then
-  consider Voronoi/slicing — but re-check the rule-alignment risk first
+- if the gate fails for MRR, try axis-aligned boxes only as a speed/debug
+  fallback and corner sequences for fidelity; if these fail, only then consider
+  Voronoi/slicing — but re-check the rule-alignment risk first
 
 ### 3. Generative Model
 
@@ -249,19 +296,23 @@ model is the simpler fixed-slot design, not the variable-cardinality set model.
 Primary model (build this first):
 
 - fixed `K` room slots (K = max plausible room count, e.g. 12), each slot a
-  continuous geometry vector (box `cx, cy, w, h` or corner sequence)
+  continuous geometry vector (MRR `cx, cy, w, h, angle`, or fallback sequence)
 - presence logit per slot handles variable room counts without a separate
   set-cardinality mechanism
-- outline encoder: PointNet or small Transformer over boundary points, plus the
-  absolute-scale and shape scalars
-- denoiser/vector field: small Transformer over the K slots conditioned on the
-  outline encoding
+- outline encoder: small Transformer over 128 resampled exterior boundary points,
+  plus the absolute-scale and shape scalars
+- denoiser/vector field: small Transformer over the K room slots conditioned on
+  the outline encoding; start at 4 layers / 256 dim for fast iteration, then
+  scale only after local metrics move
 - type head: categorical room label per slot
+- presence head: binary logit per slot, thresholded only after sampling
 - losses: flow-matching loss for slot geometry, cross-entropy for presence and
   labels, auxiliary loss for area distribution / room-count calibration
 - map unordered ground-truth rooms to slots with Hungarian matching over type,
-  centroid, area, and aspect; keep a deterministic canonical ordering (type,
-  area, centroid) as a debugging fallback
+  centroid, area, aspect, and wrapped MRR angle distance; keep a deterministic
+  canonical ordering (type, area, centroid) as a debugging fallback
+- sample with an ODE/Euler solver in 50-100 steps; fewer steps are acceptable for
+  demo only if validity and local FID do not degrade
 - train from scratch; seed everything through config and document the final seed
 - augment with rotations, mirrors, coordinate jitter, and small outline
   simplification noise; keep augmentations invertible and label-preserving
@@ -275,8 +326,9 @@ Stretch model (only if the primary is solid and time remains):
 
 Compute note: training a generative model from scratch to good FID in a few
 hours is only realistic with a GPU. State the available hardware up front. If
-GPU is limited, keep `K` small, the model small, and start training early
-(overlap with pipeline work) rather than waiting for the oracle gate.
+GPU is limited, keep `K` small and the model small. Before the oracle gate
+passes, only run smoke training to validate tensor shapes and losses; full
+training starts after representation approval.
 
 Baseline only, never the scored generator: a heuristic token sampler from real
 room-count/type/area distributions. Use it as an evaluation baseline and
@@ -323,8 +375,9 @@ MSD renderer implications:
 
 Default settings:
 
-- raster size: match the organiser/MSD renderer wrapper; Amine pointed to the
-  MSD script settings such as `512 x 512`
+- raster size: match the organiser/MSD renderer wrapper; use `512 x 512` as the
+  default because it matches the MSD paper/evaluation notes, and use `256 x 256`
+  only as a fallback when no explicit size is exposed
 - padding/axis limits: match the MSD rendering script/wrapper; keep
   `axis("equal")` and `axis("off")` in parity mode
 - feature extractor: whatever TorchMetrics' `FrechetInceptionDistance` uses for
@@ -406,7 +459,7 @@ Repo layout and tooling:
   the contract tests and a representation round-trip test. Wire a minimal CI
   workflow so the review sees green checks.
 - Config: one YAML/dataclass config holding seed, rasterisation params, model
-  size, and `K`; no magic numbers scattered in code.
+  size, MRR geometry bounds, and `K`; no magic numbers scattered in code.
 - Determinism utility: a single `seed_everything(seed)` covering python/numpy/torch
   RNG; note that full CUDA training determinism needs extra cudnn flags and may
   cost speed — inference determinism for `generate` is the must-have.
@@ -447,11 +500,38 @@ Stress-test these cases before the final submission:
 - rare room labels
 - rooms smaller than the rasterization resolution
 - invalid polygon orientation
-- generated room boxes lying partly or wholly outside the outline
+- generated MRRs or fallback boxes lying partly or wholly outside the outline
+- generated MRRs with invalid angles, tiny width/height, or decoded polygons that
+  collapse after clipping
 - disconnected clipped rooms
 - outlines whose buffer operation creates slivers
 
 ## Execution Timeline
+
+### Task Board Mapping
+
+Track implementation with these milestones:
+
+- `data-pipeline`: extract/load the MSD CSV, filter `entity_type == "area"`, map
+  `entity_subtype` through MSD `ROOM_MAPPING`, group by `unit_id`, construct
+  outlines, normalise coordinates, and split by `plan_id` with the documented
+  seed.
+- `repr-encode-decode`: implement MRR encode/decode, canonical angle handling,
+  round-trip Shapely conversion, and reconstruction IoU reporting.
+- `validity-repair`: implement largest-first overlap repair, outline clipping,
+  sliver-thresholded gap fill with reject/resample guards, sliver cleanup, and
+  optional 256-level snapping.
+- `eval-pipeline`: implement MSD-compatible rasterisation, geometry validity
+  metrics, TorchMetrics FID, and PRDC density/coverage before tuning the model.
+- `oracle-gate`: reconstruct real layouts from MRRs with repair only, inspect
+  side-by-side renders, report IoU/boundary/local-FID metrics, and decide whether
+  to keep MRRs or switch to the fallback representation.
+- `flow-model`: implement conditional flow matching over fixed K room slots,
+  outline encoding, type/presence heads, Hungarian matching, and ODE sampling.
+- `generate-api`: expose deterministic `generate(outline)` and a batch CLI with
+  seed/candidate-count/checkpoint/config metadata.
+- `demo-deploy`: build the Gradio demo only after the API can return valid
+  layouts locally.
 
 ### First 2 Hours: Make the Target Concrete
 
@@ -464,12 +544,14 @@ Stress-test these cases before the final submission:
   visualisation.
 - Freeze label taxonomy and split manifest.
 - Decide the official `generate()` input/output schema and write contract tests.
+- Create the config skeleton for seed, MRR representation, model-space scale,
+  slot budget `K`, and `512 x 512` raster evaluation.
 
 ### Hours 2-6: Geometry-First Baseline
 
 - Implement preprocessing (including absolute-scale conditioning scalars).
-- Implement encode/decode for the box representation plus the validity-repair
-  layer (snap, clip, resolve overlaps/gaps).
+- Implement MRR encode/decode plus the validity-repair layer (decode, clip,
+  largest-first overlap repair, sliver-thresholded gap fill, snap).
 - Build heuristic token baseline from real room-count/type/area distributions.
 - Create `generate(outline)` with deterministic seed control.
 - Build validity metrics, the MSD-`plot.py`-matching rasteriser, TorchMetrics
@@ -483,11 +565,12 @@ finish a correct vector API, evaluator, and demo skeleton first.
 
 ### Hours 6-10: Oracle Reconstruction Gate
 
-- Encode real layouts into the box representation (fit boxes to real rooms).
+- Encode real layouts into MRRs.
 - Reconstruct with the deterministic repair layer only.
 - Compare original vs reconstructed layouts visually and with IoU/boundary/local
   FID checks.
-- Decide whether boxes suffice, or escalate to corner sequences; treat
+- Decide whether MRR suffices, whether the simpler axis-aligned fallback is
+  acceptable for speed, or whether to escalate to corner sequences; treat
   Voronoi/slicing as a last resort and re-check rule alignment first.
 - Start a small fixed-slot model training run as soon as the representation
   passes, overlapping with remaining gate work.
@@ -498,6 +581,8 @@ freeze neural work and repair the representation.
 ### Hours 10-14: Train the Flow Model
 
 - Train fixed-slot conditional flow matching model.
+- Predict 5D MRR geometry plus type/presence; set `K` from the processed room
+  count distribution instead of guessing.
 - Use validation plots every few epochs.
 - Compare against heuristic baseline.
 - Tune room-count, label, and area-ratio losses.
@@ -550,6 +635,7 @@ clarity, and submission packaging.
 - Match the official MSD renderer appearance as closely as possible.
 - Avoid visual artifacts through direct geometry plus validity repair.
 - Prefer rectilinear architectural rooms over generic cell diagrams.
+- Preserve rotated-room fidelity where it improves MSD renderer similarity.
 - Use area/type/adjoining-room priors to stay on-distribution.
 
 ### Density
@@ -585,7 +671,7 @@ clarity, and submission packaging.
 - Output vector polygons, not masks.
 - Use diffusion or flow matching.
 - Make the trained model responsible for room count, labels, and the actual room
-  geometry (box corners / corner sequences); restrict deterministic code to
+  geometry (MRRs / corner sequences); restrict deterministic code to
   validity repair so the partition is not rule-based.
 - Train from scratch.
 - Seed all data/training/sampling/evaluation paths through config and document
@@ -609,8 +695,8 @@ clarity, and submission packaging.
 | Invalid polygons hurt score | Generate geometry directly, then apply the deterministic validity-repair layer and validation tests. |
 | Room labels are noisy | Preserve expected challenge labels at output; collapse rare labels internally only with an explicit mapping back to the official taxonomy. |
 | Post-processing rules questioned | Amine clarified that post-processing is allowed if documented; keep generator central, document deterministic geometry layer, and provide unranked mode for transparency. |
-| Deterministic layer seen as a rule-based partitioner (violates the rules, hurts alignment 25%) | Generate room geometry directly (boxes/corner sequences); restrict the deterministic layer to validity repair only; document the boundary; avoid Voronoi/power-diagram shape generation. |
-| Representation reconstructs real plans poorly | Run oracle reconstruction before training; start with boxes, escalate to corner sequences, only then alternative partitions. |
+| Deterministic layer seen as a rule-based partitioner (violates the rules, hurts alignment 25%) | Generate room geometry directly (MRRs/corner sequences); restrict the deterministic layer to validity repair only; document the boundary; avoid Voronoi/power-diagram shape generation. |
+| Representation reconstructs real plans poorly | Run oracle reconstruction before training; start with MRRs, use axis-aligned boxes only as a debug fallback, escalate to corner sequences for fidelity, only then alternative partitions. |
 | Renderer wrapper unknown still flips details | Mirror MSD `plot.py` as the default rasteriser; keep image size, axis policy, node/edge drawing, and type palette config-swappable. |
 | Live demo / generated split / weight provenance / session-branch logistics slip late | Decide host, output format, checkpoint provenance format, and `entire/checkpoints/v1` on day one; build the deploy path early. |
 
