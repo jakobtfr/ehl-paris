@@ -61,7 +61,16 @@ class RoomMRR:
     def label(self) -> str:
         return ROOM_NAMES[self.label_idx]
 
+    @property
+    def has_finite_geometry(self) -> bool:
+        return all(
+            math.isfinite(value)
+            for value in (self.cx, self.cy, self.w, self.h, self.angle)
+        )
+
     def to_polygon(self) -> Polygon:
+        if not self.has_finite_geometry or self.w <= 0 or self.h <= 0:
+            return Polygon()
         w2, h2 = self.w / 2.0, self.h / 2.0
         poly = Polygon([(-w2, -h2), (w2, -h2), (w2, h2), (-w2, h2)])
         poly = affinity.rotate(poly, self.angle, origin=(0, 0), use_radians=True)
