@@ -18,6 +18,7 @@ from floorgen.repr.mrr import (
     encode_decode_iou,
     geometry_iou,
     mrrs_to_array,
+    partition_accounting,
     polygon_to_mrr,
     repair_partition,
     wrapped_angle_distance,
@@ -103,6 +104,22 @@ def test_repair_contains_and_partitions():
         assert p.difference(outline.buffer(1e-6)).area < 1e-6
     assert total <= outline.area * 1.001
     assert total >= outline.area * 0.8
+
+
+def test_partition_accounting_reports_valid_repair_fractions():
+    outline = box(0, 0, 10, 10)
+    part = repair_partition(
+        [
+            RoomMRR(2.5, 5, 5, 10, 0.0, 0),
+            RoomMRR(7.5, 5, 5, 10, 0.0, 7),
+        ],
+        outline,
+    )
+    accounting = partition_accounting(part, outline)
+
+    assert accounting.overlap_frac < 1e-9
+    assert accounting.gap_frac < 1e-9
+    assert accounting.outside_frac < 1e-9
 
 
 def test_repair_rejects_large_overlap_with_limit_in_message():
