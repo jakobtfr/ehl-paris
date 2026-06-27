@@ -15,6 +15,7 @@ from floorgen.repr.mrr import (
     RoomMRR,
     _iter_polygons,
     array_to_mrrs,
+    canonical_angle,
     encode_decode_iou,
     geometry_iou,
     mrrs_to_array,
@@ -50,6 +51,14 @@ def test_polygon_to_mrr_returns_degenerate_mrr_for_empty_polygon():
 def test_angle_distance_wraps_modulo_pi():
     assert wrapped_angle_distance(0.0, math.pi) < 1e-9
     assert wrapped_angle_distance(math.pi / 2 - 0.01, -math.pi / 2 + 0.01) < 0.03
+
+
+def test_canonical_angle_stays_in_half_open_pi_range():
+    for angle in np.linspace(-8 * math.pi, 8 * math.pi, 33):
+        wrapped = canonical_angle(float(angle))
+
+        assert -math.pi / 2 <= wrapped < math.pi / 2
+        assert wrapped_angle_distance(wrapped, float(angle)) < 1e-9
 
 
 def test_room_mrr_canonicalizes_dimensions_without_changing_geometry():
