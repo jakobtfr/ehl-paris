@@ -16,7 +16,7 @@ Dwellings).
 |---|---|---|
 | Input: apartment outline polygon | Done | `generate(outline)` accepts any Shapely `Polygon`/`MultiPolygon` |
 | Output: typed room polygons (vector) | Done | Returns `list[dict]` with `label`, `polygon`, `geojson` per room |
-| Diffusion/flow-matching model | In progress | Model seam at `GENERATOR` in `generate.py`; baseline fallback active |
+| Diffusion/flow-matching model | Training path implemented | `src/floorgen/model/*` + `scripts/train_flow.py`; baseline fallback remains active until a checkpoint is registered |
 | MRR room representation (cx, cy, w, h, angle, type) | Done | `src/floorgen/repr/mrr.py` |
 | Deterministic validity-repair layer | Done | Clips to outline, resolves overlaps, fills slivers |
 | FID evaluation (TorchMetrics) | Done | `src/floorgen/eval/metrics.py::compute_fid` |
@@ -40,7 +40,7 @@ Dwellings).
          │
          ▼
 ┌────────────────────┐      ┌────────────────────────────────┐
-│ GENERATOR backend  │◀─────│ Trained flow model (when ready) │
+│ GENERATOR backend  │◀─────│ Trained flow checkpoint          │
 │ (pluggable seam)   │      │ OR baseline heuristic (default) │
 └────────┬───────────┘      └────────────────────────────────┘
          │ list[RoomMRR]
@@ -80,6 +80,13 @@ src/floorgen/
     boxes.py           axis-aligned fallback representation
     oracle_gate.py     MRR reconstruction gate (go/no-go before training)
     README.md          representation contract documentation
+  model/
+    data.py            processed JSONL → fixed-slot model tensors
+    geometry.py        outline conditioning + MRR tensor encode/decode
+    matching.py        Hungarian room-slot matching
+    network.py         conditional fixed-slot room flow network
+    losses.py          flow, presence, and room-type training losses
+    sampler.py         Euler sampler + checkpoint loader for GENERATOR
   eval/
     render.py          MSD-parity rasteriser (torch-free)
     prdc.py            density/coverage (vendored clovaai PRDC, numpy-only)
@@ -88,6 +95,7 @@ src/floorgen/
     app.py             Gradio demo UI
     presets.json       real MSD apartment outlines for the demo
 scripts/
+  train_flow.py        train/smoke-test the conditional flow model
   smoke_test.py        standalone pipeline smoke test (no deps beyond core)
   evaluate.py          full evaluation CLI (generate → validate → render → metrics)
   export_batch.py      batch export generated layouts to Parquet/CSV
@@ -97,6 +105,7 @@ tests/
   test_repair.py       validity-repair layer tests
   test_eval.py         evaluation pipeline tests
   test_export.py       export utilities tests
+  test_model_*.py      flow-model data/loss/sampler/train smoke tests
 ```
 
 ---
@@ -140,17 +149,23 @@ uv run python -m floorgen.data.preprocess --out data/processed --reports reports
 # 2. Oracle gate — verify MRR representation fidelity
 uv run python -m floorgen.repr.oracle_gate --units data/processed/units.jsonl
 
-# 3. Generate rooms for an outline (smoke test)
+# 3. Train-flow smoke test (requires preprocessed units.jsonl; CPU-friendly)
+uv run --extra train python scripts/train_flow.py \
+  --data data/processed/units.jsonl \
+  --out checkpoints/flow-smoke.pt \
+  --epochs 1 --batch-size 2 --max-steps 2 --device cpu
+
+# 4. Generate rooms for an outline (baseline smoke test unless checkpoint registered)
 uv run python -B -c "from shapely.geometry import box; from floorgen.generate import generate; print(len(generate(box(0,0,10,8))), 'rooms')"
 
-# 4. Tests + lint
+# 5. Tests + lint
 uv run --extra dev pytest -q
 uv run --extra dev ruff check src tests
 
-# 5. Quick smoke test (no external data or gradio needed)
-python scripts/smoke_test.py
+# 6. Quick smoke test (no external data or gradio needed)
+uv run python scripts/smoke_test.py
 
-# 6. Launch Gradio demo (requires: pip install gradio)
+# 7. Launch Gradio demo (requires: pip install gradio)
 uv run python app.py
 ```
 
@@ -165,23 +180,24 @@ uv run python app.py
 5. **Inspect** the GeoJSON output panel for machine-readable room geometry.
 
 The demo always uses whatever backend is wired into `GENERATOR`. Today this is
-the heuristic baseline; once the trained flow model is registered, the demo
-upgrades automatically with no UI changes.
+the heuristic baseline unless a checkpoint-backed sampler is registered; once a
+trained flow checkpoint is wired in, the demo upgrades automatically with no UI
+changes.
 
 ---
 
 ## Known Limitations
 
-- **Baseline fallback active.** The current `GENERATOR` uses a heuristic
+- **Baseline fallback active by default.** The current `GENERATOR` uses a heuristic
   space-partitioning baseline (`baseline.py`). This satisfies the `generate()`
   contract and produces valid geometry, but does **not** constitute the scored
-  diffusion/flow model. Generated layouts are structurally plausible but not
-  learned from data.
+  diffusion/flow model unless replaced by a loaded checkpoint sampler.
+- **Training code exists; trained weights are not committed.** The fixed-slot
+  conditional flow model, loss, sampler, and training script are implemented,
+  but no real MSD-trained checkpoint is present in this checkout.
 - **MRR compression.** Minimum rotated rectangles cannot perfectly represent
   L-shaped or irregular rooms. The oracle gate quantifies this; corner-sequence
   tokens are a documented stretch goal.
-- **No trained weights committed.** Model training runs on the AMD GPU box. The
-  `GENERATOR` seam allows hot-swapping once a checkpoint is available.
 - **Evaluation requires torch.** FID and PRDC run only with `--extra train`
   installed (GPU box). Geometry-validity metrics are always available.
 - **MSD CSV not included.** The dataset is ~370k rows and is sourced from
@@ -191,11 +207,19 @@ upgrades automatically with no UI changes.
 
 ## Wiring in the Trained Model
 
-Implement a sampler `model_sample(outline, rng) -> list[RoomMRR]` and register:
+Train a checkpoint with `scripts/train_flow.py`, load it as a
+`GENERATOR`-compatible sampler, and register it:
 
 ```python
 import floorgen.generate
-floorgen.generate.GENERATOR = model_sample
+from floorgen.model.sampler import load_generator
+
+floorgen.generate.GENERATOR = load_generator(
+    "checkpoints/flow.pt",
+    device="cpu",      # or "cuda" on the GPU box
+    steps=32,
+    threshold=0.5,
+)
 ```
 
 The repair layer, evaluator, contract tests, demo, and `generate(outline)`
@@ -214,8 +238,11 @@ ranking method, checkpoint, and config hash for submitted outputs.
 - [x] Evaluation pipeline (FID, density, coverage)
 - [x] Data pipeline (preprocessing, outline construction, normalization)
 - [x] MRR representation with oracle validation gate
+- [x] Flow-model training/sampling code path
 - [x] Honest limitations documented
 - [ ] Trained flow/diffusion model registered as `GENERATOR`
+- [ ] Real MSD preprocessing artifacts (`data/processed/*`, reports)
+- [ ] Real trained checkpoint + checkpoint metadata
 - [ ] Generated test-split outputs in MSD `geom` format
 - [ ] Pitch deck
 
