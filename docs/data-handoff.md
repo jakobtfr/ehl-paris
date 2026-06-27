@@ -7,6 +7,32 @@ This file is the running handoff log. Newest iteration on top.
 
 ---
 
+## Iteration 4 — plan-level split summary + leakage check
+
+**Files changed**
+- `src/floorgen/data/preprocess.py` — new `split_summary(records, split)` returning
+  `unit_counts`, `plan_counts`, `n_plans`, and `plan_leakage` (plan_ids that straddle
+  train/val — always empty for a correct split, now auditable). Added to the report under
+  a new `split_summary` key; existing `split_counts` kept for backward compatibility.
+- `tests/test_data_split.py` — new. Determinism (seed + record-order independence),
+  leakage-safety (every plan single split), plan-level val fraction, tiny-input guard,
+  and `split_summary` counts/leakage detection. Minimal synthetic records only.
+
+**Data assumptions (reaffirmed)**
+- Split groups by `plan_id`; `val_frac` is applied at the plan level
+  (`n_val = max(1, int(n_plans * val_frac))`). Reproducible from `SEED` alone, independent
+  of record order (plan ids are sorted before the seeded shuffle).
+
+**Tests run**
+- `uv run --extra dev pytest tests -q` -> 78 passed.
+- `uv run --extra dev ruff check src/floorgen/data tests` -> clean.
+
+**Blockers** — none new.
+**Next** — end-to-end `write_outputs`/`main` test on a synthetic CSV to lock full report
+completeness (`n_unmapped_rooms`, `n_invalid_geom_rows`, `split_summary`).
+
+---
+
 ## Iteration 3 — transform round-trip invariants
 
 **Files changed**

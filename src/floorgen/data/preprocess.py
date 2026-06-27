@@ -150,6 +150,31 @@ def split_by_plan(records: list[dict], val_frac: float = 0.15, seed: int = SEED)
     return {r["unit_id"]: ("val" if r["plan_id"] in val_plans else "train") for r in records}
 
 
+def split_summary(records: list[dict], split: dict[int, str]) -> dict[str, Any]:
+    """Unit- and plan-level split counts plus an explicit leakage check.
+
+    The split is leakage-safe when every unit of a plan shares one split.
+    ``plan_leakage`` lists any ``plan_id`` whose units landed in more than one
+    split (should always be empty); it makes the guarantee auditable rather than
+    merely assumed.
+    """
+    unit_counts: Counter = Counter(split[r["unit_id"]] for r in records)
+    plan_to_split: dict[int, str] = {}
+    leaked: set[int] = set()
+    for r in records:
+        plan_id, s = r["plan_id"], split[r["unit_id"]]
+        if plan_id in plan_to_split and plan_to_split[plan_id] != s:
+            leaked.add(plan_id)
+        plan_to_split[plan_id] = s
+    plan_counts: Counter = Counter(plan_to_split.values())
+    return {
+        "unit_counts": dict(unit_counts),
+        "plan_counts": dict(plan_counts),
+        "n_plans": len(plan_to_split),
+        "plan_leakage": sorted(leaked),
+    }
+
+
 def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
                   reports_dir: Path, skipped: int,
                   unmapped: Counter | None = None,
@@ -195,6 +220,7 @@ def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
         "n_plans": int(manifest["plan_id"].nunique()),
         "n_floors": int(manifest["floor_id"].nunique()),
         "split_counts": manifest["split"].value_counts().to_dict(),
+        "split_summary": split_summary(records, split),
         "rooms_per_unit": {
             "min": int(manifest["n_rooms"].min()),
             "median": float(manifest["n_rooms"].median()),
