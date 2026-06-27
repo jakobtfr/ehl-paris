@@ -63,6 +63,43 @@ Hannes-Leonhard replied:
 > model, parametrization and from your code we should see how your weights were
 > obtained
 
+Troy asked Amine Chraibi a follow-up:
+
+> Hey Amine, A few more questions (again):
+>
+> What would really impress the judges?
+>
+> What are the exact rendering settings used before FID/density/coverage?
+> (image size, DPI, padding, colors, line widths, antialiasing, does plot_floor
+> draw nodes/edges)
+>
+> What output format do you want for the generated test split? (GeoJSON, WKT +
+> label CSV, polygons by unit_id, coordinate precision, required label names,
+> metadata fields)
+>
+> How many samples per outline are evaluated and how is seed 42 applied? (global
+> RNG, reset per outline, per sample, or fixed submitted file)
+>
+> What post-processing is allowed after the model samples geometry? (snapping,
+> clipping to outline, overlap/gap resolution, sliver removal, sample ranking)
+>
+> Are room types used in metric rendering or only for code/presentation review?
+> (colored by MSD room type, arbitrary per room, or binary occupancy)
+>
+> Thank you again
+
+Amine replied:
+
+> - be original !
+> - MSD rendering script should have all settings (512x512 etc)
+> - same format as the geom column in the dataset so rendering can be done with
+>   the same script
+> - seed isn't predetermined and use any test time compute method of your choice
+>   (i.e generate as many samples as you want as long as you document it
+>   properly)
+> - everything is allowed as long as it's documented properly
+> - room type will be used for rendering which impacts FID so yes
+
 ## Practical Interpretation
 
 ### Evaluation Stack
@@ -74,6 +111,10 @@ Hannes-Leonhard replied:
 - Rasterization should follow the rendering scripts from the official MSD
   repository:
   `https://github.com/caspervanengelenburg/msd`.
+- The MSD rendering script is the source of truth for settings such as `512x512`
+  resolution, colors, line widths, padding, and related plot details.
+- Room types affect rendering, which means semantic labels can affect FID
+  directly through room colors.
 
 Local validation should prioritize matching these dependencies and rendering
 settings as closely as possible.
@@ -89,6 +130,13 @@ material to make the model and training process auditable:
 - The code should make clear how the submitted weights were obtained.
 - Training code and configuration should be reproducible enough for organisers
   to trace the path from dataset to weights to generated layouts.
+- Generated test-split geometry should use the same format as the MSD `geom`
+  column so the organisers can render it with the same script.
+- Seed and sample count are not predetermined by the organisers. Any test-time
+  compute strategy, including generating many candidates per outline, is allowed
+  if documented clearly.
+- Post-processing is allowed if documented clearly, including snapping,
+  clipping, overlap/gap resolution, sliver removal, and sample ranking.
 
 ### Hidden Test Distribution
 
@@ -114,6 +162,7 @@ This suggests a hierarchy for generation:
 2. Produce realistic room geometry.
 3. Assign plausible semantic labels.
 4. Preserve train-set-like diversity for density and coverage.
+5. Be original in the model/design story, not only valid.
 
 ### Likely Penalties and Rejections
 
@@ -143,12 +192,16 @@ Layouts are likely to be penalized for:
 - Package generated test-split layouts as the main deliverable, while keeping
   training code, configs, weights, and methodology clear enough to support the
   presentation.
+- Use a documented test-time compute pipeline: generate multiple candidates,
+  repair/rank them if useful, and record the sample count, seeds, filters, and
+  ranking criteria.
+- Preserve and validate room labels because they affect rendered colors and
+  therefore FID.
 
-## Open Follow-Up Questions
+## Remaining Follow-Up Questions
 
 - Exact PyTorch FID package or API version used by the organisers.
-- Exact MSD renderer command, image size, color mapping, antialiasing, and line
-  width settings.
-- Number of generated samples per outline during final scoring.
-- Whether invalid samples are assigned worst score, filtered, or partially
-  penalized.
+- Exact wrapper command around the MSD renderer, including whether graph
+  nodes/edges are drawn.
+- Exact invalid-sample handling in the hidden scorer, even though
+  post-processing itself is allowed when documented.

@@ -38,13 +38,13 @@ fail the gate (convex, diagonal cells unlike real plans); do not start there.
 - Primary scored artifact: the generated layouts for the held-out MSD split, in
   the organiser-requested format. Do not assume the judges need to run training
   during evaluation.
-- `generate(outline, seed=42, n_samples=1, mode="raw")` returns labelled room
+- `generate(outline, seed=None, n_samples=1, mode="raw")` returns labelled room
   polygons in the original coordinate system.
 - A compatibility wrapper exposes plain `generate(outline)` if the evaluator
   requires the exact one-argument signature.
-- A batch CLI exports all generations for a manifest of test outlines with seed
-  `42`, fixed sample count, and metadata tying each output to the model
-  checkpoint/config used.
+- A batch CLI exports all generations for a manifest of test outlines with the
+  documented seed, candidate count, test-time compute strategy, and metadata
+  tying each output to the model checkpoint/config used.
 - A live demo lets judges upload or select an outline, sample multiple plausible
   layouts, and inspect vector polygons.
 - A pitch deck explains why the system is aligned with FID, density, coverage,
@@ -66,13 +66,13 @@ approve otherwise.
 Proposed API:
 
 ```python
-def generate(outline, seed: int = 42, n_samples: int = 1, mode: str = "raw") -> list[dict]:
+def generate(outline, seed: int | None = None, n_samples: int = 1, mode: str = "raw") -> list[dict]:
     ...
 ```
 
 If organisers require a strict `generate(outline)` function, provide a wrapper
-that calls this API with default seed `42`, `n_samples=1`, and `mode="raw"`,
-then returns the first sample in the evaluator-expected shape.
+that calls this API with the documented default seed, `n_samples=1`, and
+`mode="raw"`, then returns the first sample in the evaluator-expected shape.
 
 Inputs:
 
@@ -92,11 +92,11 @@ Outputs:
   - `geojson`: serializable polygon geometry
 - polygons must partition the outline within tolerance
 - labels must be from the documented taxonomy
-- same outline plus same seed must produce stable output
-- with `n_samples > 1`, the samples must be **distinct but deterministic**: seed
-  `42` fixes the RNG, and successive draws differ from one another, so coverage
-  is preserved while the run stays reproducible (the official protocol fixes a
-  sample count and seed `42`, so the scored path draws multiple samples)
+- same outline plus same documented seed must produce stable output
+- with `n_samples > 1`, the samples must be distinct while still reproducible
+  when the same seed/config/test-time compute settings are reused
+- exported samples should be serializable in the same geometry format as the MSD
+  `geom` column so the organiser renderer can process them directly
 
 Contract tests:
 
@@ -105,10 +105,11 @@ Contract tests:
 - no pairwise overlap beyond tolerance
 - union area matches outline area within tolerance
 - all rooms have labels
-- seed `42` is deterministic for a single sample
-- repeated `generate(outline, seed=42, n_samples=N)` calls reproduce the same N
+- a fixed seed is deterministic for a single sample
+- repeated `generate(outline, seed=S, n_samples=N)` calls reproduce the same N
   samples, and those N samples are not near-duplicates of each other
 - GeoJSON serialization round-trips
+- WKT/MSD-`geom` serialization round-trips with labels
 
 ## Architecture
 
@@ -148,7 +149,7 @@ Build a reproducible MSD preprocessing pipeline:
   (a 30 m² studio vs a 120 m² flat). Without this the count head has no scale
   signal.
 - Save train/validation splits by `unit_id`, grouped by `plan_id`/`floor_id`
-  where possible, with seed `42`.
+  where possible, with the split seed documented.
 
 Deliverables:
 
@@ -261,7 +262,7 @@ Primary model (build this first):
 - map unordered ground-truth rooms to slots with Hungarian matching over type,
   centroid, area, and aspect; keep a deterministic canonical ordering (type,
   area, centroid) as a debugging fallback
-- train from scratch; seed everything with `42`
+- train from scratch; seed everything through config and document the final seed
 - augment with rotations, mirrors, coordinate jitter, and small outline
   simplification noise; keep augmentations invertible and label-preserving
 
@@ -322,8 +323,8 @@ MSD renderer implications:
 
 Default settings:
 
-- raster size: match the organiser/MSD renderer wrapper; use `256 x 256` only as
-  a fallback when no explicit size is exposed
+- raster size: match the organiser/MSD renderer wrapper; Amine pointed to the
+  MSD script settings such as `512 x 512`
 - padding/axis limits: match the MSD rendering script/wrapper; keep
   `axis("equal")` and `axis("off")` in parity mode
 - feature extractor: whatever TorchMetrics' `FrechetInceptionDistance` uses for
@@ -331,8 +332,8 @@ Default settings:
   organiser harness says otherwise
 - density/coverage `k`: `5`, matching the PRDC example/default convention unless
   the organiser harness overrides it
-- diversity check: `5` samples per validation outline, plus `1` default sample
-  for evaluator-compatibility checks
+- diversity check: `5+` samples per validation outline for development, with a
+  larger documented candidate budget for final test-time compute if useful
 - FID/density/coverage sample budget: these are noisy on small sets, so compute
   them over a few hundred+ generated rasters total, not just a handful per
   outline
@@ -356,10 +357,11 @@ Evaluator outputs:
 - track distribution fit: room count, room type frequencies, area ratios,
   adjacency patterns, corridor presence
 
-Remaining assumption to verify with Davis AI: the exact wrapper around MSD
-`plot.py` for converting vector layouts to metric images, including image
-resolution and whether graph nodes/edges are drawn. The metric implementations
-themselves are no longer open questions.
+Remaining assumption to verify with Davis AI: the exact wrapper command around
+MSD `plot.py` for converting vector layouts to metric images, especially
+whether graph nodes/edges are drawn. The metric implementations, output format,
+room-label impact, post-processing allowance, and sample-count flexibility are
+no longer open questions.
 
 ### 5. Sampling and Ranking
 
@@ -379,10 +381,10 @@ Ranking rules:
 - prefer layouts with realistic area ratios and corridor/living/kitchen
   relationships
 
-Use `raw` as the default until organisers confirm that sample ranking is allowed
-and compatible with hidden coverage scoring. If ranking is allowed, tune the
-ranker to reject broken layouts without collapsing every outline to the same
-safe template.
+Amine clarified that post-processing and test-time compute are allowed as long
+as they are documented properly. Use ranking to reject broken layouts without
+collapsing every outline to the same safe template, and report both the
+candidate budget and ranking criteria.
 
 ## Engineering and Logistics
 
@@ -405,15 +407,16 @@ Repo layout and tooling:
   workflow so the review sees green checks.
 - Config: one YAML/dataclass config holding seed, rasterisation params, model
   size, and `K`; no magic numbers scattered in code.
-- Determinism utility: a single `seed_everything(42)` covering python/numpy/torch
+- Determinism utility: a single `seed_everything(seed)` covering python/numpy/torch
   RNG; note that full CUDA training determinism needs extra cudnn flags and may
   cost speed — inference determinism for `generate` is the must-have.
 
 Submission deliverables (all required by the brief):
 
-- **Generated held-out split**: export the requested generation file(s) with
-  seed `42`, sample count, checkpoint id, config hash, and renderer/evaluator
-  version in sidecar metadata.
+- **Generated held-out split**: export the requested generation file(s) in the
+  MSD `geom`-compatible format, with seed, candidate count, ranking/filtering
+  method, checkpoint id, config hash, and renderer/evaluator version in sidecar
+  metadata.
 - **Live demo URL**: pick the host now (Gradio on Hugging Face Spaces or
   Streamlit Community Cloud). Cache the model at startup; aim for seconds per
   sample; show several samples per outline. Build the deploy path early — Sunday
@@ -452,11 +455,11 @@ Stress-test these cases before the final submission:
 
 ### First 2 Hours: Make the Target Concrete
 
-- Ask Davis AI for only the remaining evaluator details: the exact MSD `plot.py`
-  wrapper, raster image size, axis/padding policy, and whether graph nodes/edges
-  are drawn. Metric implementations are known: PRDC for density/coverage and
-  TorchMetrics FID.
-- Confirm allowed post-processing and sample ranking.
+- Ask Davis AI only for any remaining wrapper details around MSD `plot.py`, such
+  as whether graph nodes/edges are drawn in the final metric images. Metric
+  implementations, room-label impact, output format, and post-processing
+  allowance are now clarified.
+- Document the chosen post-processing and sample-ranking pipeline.
 - Parse the MSD CSV by `unit_id` and produce a first outline/rooms
   visualisation.
 - Freeze label taxonomy and split manifest.
@@ -521,9 +524,10 @@ clarity, and submission packaging.
 
 ### Final Hours: Submission Package
 
-- Freeze seed `42`.
+- Freeze the final documented generation config: seed, candidate count,
+  post-processing, ranking, checkpoint, and renderer settings.
 - Export generated layouts for the held-out split with checkpoint/config
-  metadata.
+  metadata and MSD-`geom`-compatible geometry.
 - Export model weights if feasible; always export enough provenance to show how
   the submitted generations were obtained.
 - Produce representative generated layouts and diversity grids.
@@ -584,7 +588,8 @@ clarity, and submission packaging.
   geometry (box corners / corner sequences); restrict deterministic code to
   validity repair so the partition is not rule-based.
 - Train from scratch.
-- Seed all data/training/sampling/evaluation paths with `42`.
+- Seed all data/training/sampling/evaluation paths through config and document
+  the final seed. The organiser does not require a predetermined seed.
 
 ### Innovation: 20%
 
@@ -603,7 +608,7 @@ clarity, and submission packaging.
 | Generated layouts collapse | Track coverage, sample entropy, room-count diversity, and show multiple samples per outline. |
 | Invalid polygons hurt score | Generate geometry directly, then apply the deterministic validity-repair layer and validation tests. |
 | Room labels are noisy | Preserve expected challenge labels at output; collapse rare labels internally only with an explicit mapping back to the official taxonomy. |
-| Post-processing rules questioned | Keep generator central, document deterministic geometry layer, provide unranked mode. |
+| Post-processing rules questioned | Amine clarified that post-processing is allowed if documented; keep generator central, document deterministic geometry layer, and provide unranked mode for transparency. |
 | Deterministic layer seen as a rule-based partitioner (violates the rules, hurts alignment 25%) | Generate room geometry directly (boxes/corner sequences); restrict the deterministic layer to validity repair only; document the boundary; avoid Voronoi/power-diagram shape generation. |
 | Representation reconstructs real plans poorly | Run oracle reconstruction before training; start with boxes, escalate to corner sequences, only then alternative partitions. |
 | Renderer wrapper unknown still flips details | Mirror MSD `plot.py` as the default rasteriser; keep image size, axis policy, node/edge drawing, and type palette config-swappable. |
@@ -613,27 +618,15 @@ clarity, and submission packaging.
 
 Ask these before implementation choices harden:
 
-1. Can you share the exact wrapper around MSD `plot.py` used before
-   FID/density/coverage? In particular: image resolution, axis/padding policy,
-   antialiasing/DPI, room-type palette, whether graph nodes/edges are drawn, and
-   how submitted vector outputs are converted into the graph/polygon object the
-   renderer expects.
-2. How many samples does the harness draw per outline, and how is seed `42`
-   applied across that sample count — one seed for the whole run with distinct
-   successive draws, or re-seeded per sample?
-3. What exact return shape does `generate(outline)` need (list of dicts, GeoJSON
-   FeatureCollection, GeoDataFrame, list of WKT+label)?
-4. What are the most common ways a generated layout gets penalised or rejected?
-5. Is the score driven more by semantic room labels, geometric partition
-   realism, or matching the outline perfectly?
-6. Are deterministic post-processing, geometry repair, and sample ranking
-   allowed after diffusion or flow sampling? Where is the line between allowed
-   "validity repair" and a disallowed "rule-based partitioner"?
-7. What hidden-test-set edge cases should we expect: irregular outlines, holes,
-   tiny apartments, rare room types, or unusual room counts?
-8. What exactly should be submitted for scoring: generated test-split file only,
-   a runnable `generate(outline)` entry point, model weights, or all of the
-   above?
+1. Does the final metric wrapper draw graph nodes/edges, or only colored room
+   polygons?
+2. Is there any required sidecar schema for generated split metadata beyond
+   `unit_id`, labels, WKT geometry, seed, candidate count, checkpoint, and
+   config hash?
+3. What exact label names should be used in the generated file: raw MSD subtype,
+   mapped MSD room type, or challenge-level room label?
+4. How are invalid samples handled by the hidden scorer after submission:
+   rejected, worst-scored, clipped, or partially penalized?
 
 ## Definition of Done
 
@@ -645,10 +638,11 @@ Ask these before implementation choices harden:
 - Local evaluation report compares real, heuristic baseline, and flow model.
 - Local metrics use TorchMetrics FID and PRDC density/coverage on MSD-rendered
   images.
-- Batch export produces the generated split with seed/checkpoint/config
-  metadata.
+- Batch export produces the generated split in MSD-`geom`-compatible format with
+  seed/candidate-count/checkpoint/config metadata.
 - Demo shows at least five different plausible samples for one outline.
-- README documents reproducible commands and seed handling.
+- README documents reproducible commands, seed handling, test-time compute,
+  post-processing, and ranking.
 - Presentation explains the model, parameterisation, sampling, repair layer, and
   how the submitted weights/generations were obtained.
 - Deck maps choices directly to FID, density, coverage, and review criteria.
