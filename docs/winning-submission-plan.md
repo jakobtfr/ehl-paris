@@ -35,16 +35,26 @@ fail the gate (convex, diagonal cells unlike real plans); do not start there.
 
 ## Product the Judges See
 
+- Primary scored artifact: the generated layouts for the held-out MSD split, in
+  the organiser-requested format. Do not assume the judges need to run training
+  during evaluation.
 - `generate(outline, seed=42, n_samples=1, mode="raw")` returns labelled room
   polygons in the original coordinate system.
 - A compatibility wrapper exposes plain `generate(outline)` if the evaluator
   requires the exact one-argument signature.
+- A batch CLI exports all generations for a manifest of test outlines with seed
+  `42`, fixed sample count, and metadata tying each output to the model
+  checkpoint/config used.
 - A live demo lets judges upload or select an outline, sample multiple plausible
   layouts, and inspect vector polygons.
 - A pitch deck explains why the system is aligned with FID, density, coverage,
-  vector-output constraints, and code-review criteria.
-- The repo includes reproducible training, evaluation, validation plots, model
-  weights, and a methodology writeup.
+  vector-output constraints, and code-review criteria. It must explain the
+  model architecture, room parameterisation, conditioning features, repair
+  boundary, and sampling protocol.
+- The repo includes reproducible training/evaluation code, validation plots, the
+  checkpoint/config provenance, and a methodology writeup. Include model weights
+  if practical; if not, make the code and logs clear enough that reviewers can
+  see exactly how the submitted weights/generations were obtained.
 
 ## Generator Contract
 
@@ -107,16 +117,29 @@ Contract tests:
 Build a reproducible MSD preprocessing pipeline:
 
 - Load `mds_V2_5.372k.csv`.
+- Do not download or commit the Kaggle data in this repo. Read it from an
+  explicit local path or `MSD_CSV_PATH` so the machine that has the dataset can
+  run preprocessing without changing code.
 - Filter `entity_type == "area"`.
+- Treat one `unit_id` as one apartment/dwelling training example. Keep
+  `plan_id` and `floor_id` as metadata and split groups so validation/test
+  examples do not leak from the same floor/building context into training. The
+  challenge data-construction script uses `unit_id`; `plan_id` is broader than a
+  single apartment.
 - Repair invalid geometries with a logged, deterministic policy.
 - Canonicalise room labels into a small stable taxonomy, anchored on the actual
   label values present in the CSV for `entity_type == "area"` rows (inspect the
-  distinct subtypes first; do not invent categories). Map the long tail to a
-  handful of stable buckets (e.g. living, kitchen, bedroom, bathroom, corridor,
-  storage/utility, balcony/other) and keep an explicit reverse mapping to the
-  official taxonomy for output.
+  distinct subtypes first; do not invent categories). Start from MSD
+  `constants.py` instead of creating a private taxonomy: map `entity_subtype`
+  through `ROOM_MAPPING` to the official `ROOM_NAMES` order
+  (`Bedroom`, `Livingroom`, `Kitchen`, `Dining`, `Corridor`, `Stairs`,
+  `Storeroom`, `Bathroom`, `Balcony`, plus non-room structural/door/window
+  classes). Internally collapse rare labels only after preserving an explicit
+  output mapping back to MSD names.
 - Construct the outline exactly as specified: buffer rooms by `0.3`, union, then
-  buffer back by `-0.3`.
+  buffer back by `-0.3`. Use a compatibility helper that supports both
+  GeoPandas/Shapely variants (`GeoSeries.union_all()` where available,
+  `unary_union` otherwise).
 - Normalise each plan's *shape* for modelling: translate to origin, scale by
   square root of outline area, store inverse transform for final output.
 - Crucially, this makes every plan unit-area, which erases absolute scale. Store
@@ -124,14 +147,38 @@ Build a reproducible MSD preprocessing pipeline:
   conditioning scalars, because room count and type mix depend on absolute size
   (a 30 m² studio vs a 120 m² flat). Without this the count head has no scale
   signal.
-- Save train/validation splits by `plan_id`, with seed `42`.
+- Save train/validation splits by `unit_id`, grouped by `plan_id`/`floor_id`
+  where possible, with seed `42`.
 
 Deliverables:
 
 - `data/processed/*.parquet` or `.geojsonl`
-- split manifest
-- preprocessing report with plan counts, room counts, label frequencies,
-  invalid geometry counts, and outline complexity stats
+- split manifest with `unit_id`, `plan_id`, `floor_id`, room count, area, and
+  label histogram columns
+- preprocessing report with unit counts, grouped plan/floor counts, room counts,
+  label frequencies, invalid geometry counts, and outline complexity stats
+
+### 1a. MSD Compatibility Contract
+
+Mirror the official MSD repository closely enough that our vectors can be
+rendered by the organiser path without semantic drift:
+
+- Keep an adapter from our generated room records to the MSD graph shape used by
+  `plot.py`: a `networkx.Graph` whose room nodes have `geometry` as exterior
+  coordinate lists, `room_type` as the integer index into `ROOM_NAMES`, and
+  `centroid` as the room centroid.
+- Generate only interior room nodes for the challenge output. Do not emit MSD
+  structural/door/window classes unless the organiser schema explicitly asks
+  for them.
+- If the renderer draws graph edges, add a deterministic optional adjacency
+  adapter: infer `passage` edges for rooms with boundary distance below the MSD
+  graph-extraction tolerance (`0.04`), and leave `door`/`entrance` absent unless
+  the submitted schema includes doors. Keep this off for pure polygon rendering.
+- Preserve original coordinate units in exported vectors. The model can train in
+  normalised coordinates, but the MSD renderer and outline construction expect
+  metric coordinates.
+- Add a tiny renderer smoke test that converts one generated layout to the MSD
+  graph adapter and calls `plot_floor` headlessly.
 
 ### 2. Vector Representation
 
@@ -236,29 +283,54 @@ emergency demo fallback only, unless organisers explicitly approve otherwise.
 
 ### 4. Metric-Aligned Local Evaluation
 
-Build a local evaluator before model tuning. The rasteriser is the single
-highest-leverage unknown, so make the default match the provided
-data-construction script exactly: same colouring (the brief's script colours
-rooms with `cmap="Set3"` by row order, i.e. effectively arbitrary per-room
-colours), same edge/line treatment, equal-aspect axes. Keep every rasterisation
-parameter in one config so it can be swapped to the official setting instantly.
+Build a local evaluator before model tuning. The organisers clarified the
+evaluation stack, so stop treating the metric path as unknown:
 
-This colouring detail forks the whole strategy:
+- **Density and coverage:** use the calculations from
+  `clovaai/generative-evaluation-prdc`, specifically `compute_prdc` semantics
+  over the same image features used for the judged raster set. Report density
+  and coverage; precision/recall can be logged as diagnostics.
+- **FID:** use PyTorch/TorchMetrics native FID:
+  `from torchmetrics.image.fid import FrechetInceptionDistance`.
+- **Rendering:** mirror the MSD official repository's `plot.py` path and
+  constants. Do not tune against a custom Matplotlib style if it diverges from
+  the official MSD renderer.
 
-- if rooms are coloured arbitrarily (per-room) or as binary occupancy, **room
-  type does not affect FID** — only partition geometry does, so optimise
-  geometry first and treat labels as a correctness/code-review concern
-- if rooms are coloured by **type** with a fixed palette, the spatial
-  arrangement of types matters a lot for FID — invest in type placement
-- resolve this with the organisers (see questions) and branch accordingly
+Implementation rule: vendor a small compatibility adapter or pin a dependency
+reference for PRDC/MSD rendering, but keep our evaluator's public API stable.
+Feed both real and generated plans through the same renderer, image size, axis
+limits, colors, line widths, antialiasing, and tensor conversion before metric
+updates. The plan with the best local score is the one that wins under this
+rendering contract, not under a prettier demo renderer.
+
+MSD renderer implications:
+
+- The official `plot_floor(G, ax, node_size=50, edge_size=3)` path renders a
+  floor-plan access graph, not a GeoDataFrame. It builds Shapely polygons from
+  each node's `geometry`, chooses `room_type` if present otherwise
+  `zoning_type`, colors rooms with `CMAP_ROOMTYPE`/`CMAP_ZONING`, draws room
+  fills with black edges at `lw=0`, then overlays black graph nodes, black
+  door/passage edges, and red entrance edges.
+- Room type can affect rendered color when using the official room-type color
+  map, so keep type prediction and type-to-color mapping aligned with MSD
+  constants instead of treating labels as cosmetic.
+- If the organisers' wrapper around `plot.py` strips graph edges/nodes or uses a
+  polygon-only helper, match that exact wrapper in one config switch; the default
+  should still be "official MSD renderer parity".
+- Save representative rendered PNGs beside vector outputs so metric regressions
+  can be inspected visually without reopening the raw CSV.
 
 Default settings:
 
-- raster size: `256 x 256`
-- padding: 5% of the outline bounding box
-- feature extractor: ImageNet InceptionV3 pool features as the baseline, unless
-  the official harness specifies a different encoder
-- density/coverage `k`: `5`
+- raster size: match the organiser/MSD renderer wrapper; use `256 x 256` only as
+  a fallback when no explicit size is exposed
+- padding/axis limits: match the MSD rendering script/wrapper; keep
+  `axis("equal")` and `axis("off")` in parity mode
+- feature extractor: whatever TorchMetrics' `FrechetInceptionDistance` uses for
+  the configured feature layer; keep the same features for PRDC unless the
+  organiser harness says otherwise
+- density/coverage `k`: `5`, matching the PRDC example/default convention unless
+  the organiser harness overrides it
 - diversity check: `5` samples per validation outline, plus `1` default sample
   for evaluator-compatibility checks
 - FID/density/coverage sample budget: these are noisy on small sets, so compute
@@ -267,9 +339,12 @@ Default settings:
 
 Evaluator outputs:
 
-- rasterize real and generated layouts with one fixed style
-- compute local FID using a stable feature extractor
-- compute density and coverage in the same feature space as local FID:
+- rasterize real and generated layouts with the official MSD rendering style
+- run the same generated-layout-to-MSD-graph adapter for evaluation and demo
+  screenshots, with graph nodes/edges controlled by config
+- compute local FID with `torchmetrics.image.fid.FrechetInceptionDistance`
+- compute density and coverage with PRDC `compute_prdc` logic in the same
+  feature space as local FID:
   - fit the real-layout feature manifold with `k` nearest neighbours
   - density: average number of real-neighbour radii containing generated
     features, normalised by `k`
@@ -281,9 +356,10 @@ Evaluator outputs:
 - track distribution fit: room count, room type frequencies, area ratios,
   adjacency patterns, corridor presence
 
-Assumption to verify with Davis AI: exact hidden rasterization settings. If the
-official harness is unavailable, make the local evaluator explicit and
-consistent, then show it in the deck.
+Remaining assumption to verify with Davis AI: the exact wrapper around MSD
+`plot.py` for converting vector layouts to metric images, including image
+resolution and whether graph nodes/edges are drawn. The metric implementations
+themselves are no longer open questions.
 
 ### 5. Sampling and Ranking
 
@@ -317,7 +393,9 @@ Decide these on day one.
 Repo layout and tooling:
 
 - Package manager and runtime: `uv` with a single `pyproject.toml`; pin all deps
-  (shapely, geopandas, torch, numpy, matplotlib) with a committed lockfile.
+  (shapely, geopandas, torch, torchmetrics, torch-fidelity if required by
+  TorchMetrics FID, numpy, matplotlib, scikit-learn/PRDC) with a committed
+  lockfile.
 - Module separation, one concern each: `data/` (preprocessing + splits),
   `repr/` (encode/decode geometry + validity repair), `model/` (flow model +
   training), `eval/` (rasteriser + FID/density/coverage), `generate.py`
@@ -333,12 +411,18 @@ Repo layout and tooling:
 
 Submission deliverables (all required by the brief):
 
+- **Generated held-out split**: export the requested generation file(s) with
+  seed `42`, sample count, checkpoint id, config hash, and renderer/evaluator
+  version in sidecar metadata.
 - **Live demo URL**: pick the host now (Gradio on Hugging Face Spaces or
   Streamlit Community Cloud). Cache the model at startup; aim for seconds per
   sample; show several samples per outline. Build the deploy path early — Sunday
   hosting surprises are a known time sink.
-- **Model weights in the repo**: commit via Git LFS or attach as a release
-  asset; document the download/load path so a clean clone works.
+- **Model provenance**: the presentation and repo must make clear what model was
+  trained, how rooms were parameterised, what config produced the submitted
+  generations, and where the resulting checkpoint/weights came from. Commit
+  weights via Git LFS or attach as a release asset if practical; otherwise keep
+  training scripts, config, logs, and checkpoint metadata inspectable.
 - **`generate(outline)` entry point**: export exactly this symbol as canonical;
   keep the extra knobs (`seed`, `n_samples`, `mode`) on a separate function so
   evaluator introspection of `generate` can't trip.
@@ -368,9 +452,13 @@ Stress-test these cases before the final submission:
 
 ### First 2 Hours: Make the Target Concrete
 
-- Ask Davis AI for the exact evaluation harness or rasterization settings.
+- Ask Davis AI for only the remaining evaluator details: the exact MSD `plot.py`
+  wrapper, raster image size, axis/padding policy, and whether graph nodes/edges
+  are drawn. Metric implementations are known: PRDC for density/coverage and
+  TorchMetrics FID.
 - Confirm allowed post-processing and sample ranking.
-- Parse the MSD CSV and produce a first outline/rooms visualisation.
+- Parse the MSD CSV by `unit_id` and produce a first outline/rooms
+  visualisation.
 - Freeze label taxonomy and split manifest.
 - Decide the official `generate()` input/output schema and write contract tests.
 
@@ -381,7 +469,8 @@ Stress-test these cases before the final submission:
   layer (snap, clip, resolve overlaps/gaps).
 - Build heuristic token baseline from real room-count/type/area distributions.
 - Create `generate(outline)` with deterministic seed control.
-- Build validity metrics, the script-matching rasteriser, and visual panels.
+- Build validity metrics, the MSD-`plot.py`-matching rasteriser, TorchMetrics
+  FID, PRDC density/coverage, and visual panels.
 
 Milestone: valid vector partitions for arbitrary outlines before any neural
 model is trained.
@@ -433,7 +522,10 @@ clarity, and submission packaging.
 ### Final Hours: Submission Package
 
 - Freeze seed `42`.
-- Export model weights.
+- Export generated layouts for the held-out split with checkpoint/config
+  metadata.
+- Export model weights if feasible; always export enough provenance to show how
+  the submitted generations were obtained.
 - Produce representative generated layouts and diversity grids.
 - Include pitch visuals:
   - blinded real-vs-generated grid
@@ -451,19 +543,21 @@ clarity, and submission packaging.
 
 ### FID
 
-- Match hidden raster appearance as closely as possible.
+- Match the official MSD renderer appearance as closely as possible.
 - Avoid visual artifacts through direct geometry plus validity repair.
 - Prefer rectilinear architectural rooms over generic cell diagrams.
 - Use area/type/adjoining-room priors to stay on-distribution.
 
 ### Density
 
+- Compute locally with PRDC semantics against the rendered image features.
 - Rank out obviously implausible samples.
 - Penalise invalid geometry and weird room ratios.
 - Calibrate room counts and labels to training distribution.
 
 ### Coverage
 
+- Compute locally with PRDC semantics against the rendered image features.
 - Preserve stochastic sampling.
 - Report multiple samples per outline in the demo.
 - Avoid over-ranking into one safe mode.
@@ -504,7 +598,7 @@ clarity, and submission packaging.
 
 | Risk | Mitigation |
 | --- | --- |
-| Hidden evaluator differs from local metrics | Ask for harness; keep rasterization configurable; optimize geometry validity and distribution stats that transfer. |
+| Hidden evaluator differs from local metrics | Use PRDC for density/coverage, TorchMetrics FID, and MSD `plot.py` renderer parity; keep the exact renderer wrapper configurable. |
 | Model training underperforms in hackathon time | Ship the trained small flow/diffusion model as the official generator; use the heuristic sampler only as a baseline or demo ablation unless approved. |
 | Generated layouts collapse | Track coverage, sample entropy, room-count diversity, and show multiple samples per outline. |
 | Invalid polygons hurt score | Generate geometry directly, then apply the deterministic validity-repair layer and validation tests. |
@@ -512,18 +606,18 @@ clarity, and submission packaging.
 | Post-processing rules questioned | Keep generator central, document deterministic geometry layer, provide unranked mode. |
 | Deterministic layer seen as a rule-based partitioner (violates the rules, hurts alignment 25%) | Generate room geometry directly (boxes/corner sequences); restrict the deterministic layer to validity repair only; document the boundary; avoid Voronoi/power-diagram shape generation. |
 | Representation reconstructs real plans poorly | Run oracle reconstruction before training; start with boxes, escalate to corner sequences, only then alternative partitions. |
-| Rasterisation colouring unknown flips the strategy | Mirror the provided script as the default rasteriser; keep it config-swappable; ask organisers whether colour is by type, per-room, or binary. |
-| Live demo / weights / session-branch logistics slip late | Decide host, weight distribution (LFS), and `entire/checkpoints/v1` on day one; build the deploy path early. |
+| Renderer wrapper unknown still flips details | Mirror MSD `plot.py` as the default rasteriser; keep image size, axis policy, node/edge drawing, and type palette config-swappable. |
+| Live demo / generated split / weight provenance / session-branch logistics slip late | Decide host, output format, checkpoint provenance format, and `entire/checkpoints/v1` on day one; build the deploy path early. |
 
 ## Organizer Questions
 
 Ask these before implementation choices harden:
 
-1. Can you share the exact rasterisation used before FID/density/coverage? In
-   particular: are rooms coloured by **room type** (fixed palette), coloured
-   arbitrarily per room, or rendered as binary occupancy? What resolution,
-   padding, fill, and line width? (This determines whether room *type* affects
-   the score at all.)
+1. Can you share the exact wrapper around MSD `plot.py` used before
+   FID/density/coverage? In particular: image resolution, axis/padding policy,
+   antialiasing/DPI, room-type palette, whether graph nodes/edges are drawn, and
+   how submitted vector outputs are converted into the graph/polygon object the
+   renderer expects.
 2. How many samples does the harness draw per outline, and how is seed `42`
    applied across that sample count — one seed for the whole run with distinct
    successive draws, or re-seeded per sample?
@@ -537,6 +631,9 @@ Ask these before implementation choices harden:
    "validity repair" and a disallowed "rule-based partitioner"?
 7. What hidden-test-set edge cases should we expect: irregular outlines, holes,
    tiny apartments, rare room types, or unusual room counts?
+8. What exactly should be submitted for scoring: generated test-split file only,
+   a runnable `generate(outline)` entry point, model weights, or all of the
+   above?
 
 ## Definition of Done
 
@@ -546,7 +643,13 @@ Ask these before implementation choices harden:
 - Oracle reconstruction proves the vector representation can resemble real
   floor plans before model training.
 - Local evaluation report compares real, heuristic baseline, and flow model.
+- Local metrics use TorchMetrics FID and PRDC density/coverage on MSD-rendered
+  images.
+- Batch export produces the generated split with seed/checkpoint/config
+  metadata.
 - Demo shows at least five different plausible samples for one outline.
 - README documents reproducible commands and seed handling.
+- Presentation explains the model, parameterisation, sampling, repair layer, and
+  how the submitted weights/generations were obtained.
 - Deck maps choices directly to FID, density, coverage, and review criteria.
 - Clean clone can run a smoke generation path without manual fixes.

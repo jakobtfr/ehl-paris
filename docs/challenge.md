@@ -49,7 +49,8 @@ geometry dataframe, not in the image or graph folders.
 | Location | Description |
 | --- | --- |
 | `mds_V2_5.372k.csv` | Room geometry. Polygons are in the `geom` column as WKT. This is the vector modality, separate from the `struct_in`, `graph_in`, `graph_out`, and `full_out` folders, which this task does not use. |
-| `entity_type == area` | Selects the room and space polygons for a given `plan_id`. |
+| `unit_id` | Selects one apartment/dwelling. Keep `plan_id` and `floor_id` as broader context metadata. |
+| `entity_type == area` | Selects the room and space polygons for a given `unit_id`. |
 | `outline` | Built from rooms by the provided script: buffer each room out by 0.3 m, union, then buffer back in, fusing them into one exterior shell. |
 
 ## Fixed Requirements
@@ -73,6 +74,15 @@ The representation may be anything except a pixel grid.
 
 Submissions are evaluated on two axes, realism and diversity, against a held-out
 set of real Swiss floor plans.
+
+Evaluator clarification from organisers:
+
+- **Density and coverage:** computed with the formulas/implementation from
+  `clovaai/generative-evaluation-prdc`.
+- **FID:** computed with TorchMetrics'
+  `torchmetrics.image.fid.FrechetInceptionDistance`.
+- **Rendering:** vector layouts are rasterised with the rendering scripts from
+  the official MSD repository, especially `plot.py`.
 
 ### FID: Frechet Inception Distance
 
@@ -122,9 +132,15 @@ scores comparable across teams.
 | GitHub repository | Code, public or private | Repo link | Yes |
 | Live demo | Working demo of the model | URL | Yes |
 
-The repository should include training and generation code, model weights, a
+The repository should include training and generation code, a
 `generate(outline)` entry point that returns room polygons, and a short
-methodology writeup.
+methodology writeup. Include model weights when practical, or at minimum make
+the weight/generation provenance inspectable from code, configs, and logs.
+
+Organiser clarification: generally the generated outputs for the test split are
+enough for scoring, but the presentation must explain the model and
+parameterisation, and the code should make it clear how the submitted
+weights/generations were obtained.
 
 Teams must include their full working-session record: the
 `entire/checkpoints/v1` branch, with at least one prompt. This is captured for a
@@ -152,7 +168,7 @@ review. Review weighting:
 
 ## Appendix: Provided Data-Construction Script
 
-The reference script loads the geometry dataframe, selects one plan's room
+The reference script loads the geometry dataframe, selects one dwelling's room
 polygons where `entity_type == area`, fuses them into the single outline used as
 the model input, and plots the input and target side by side.
 
@@ -168,9 +184,9 @@ df = pd.read_csv(csv_path)
 df["geom"] = df["geom"].apply(wkt.loads)
 gdf = gpd.GeoDataFrame(df, geometry="geom")
 
-# 2. Isolate a plan
-sample_plan_id = 7988
-apartment_gdf = gdf[gdf["plan_id"] == sample_plan_id]
+# 2. Isolate one apartment/dwelling
+sample_unit_id = 64314
+apartment_gdf = gdf[gdf["unit_id"] == sample_unit_id]
 rooms_gdf = apartment_gdf[apartment_gdf["entity_type"] == "area"]
 
 # Merge the rooms to create the outline:
@@ -180,7 +196,7 @@ rooms_gdf = apartment_gdf[apartment_gdf["entity_type"] == "area"]
 wall_bridge_distance = 0.3
 solid_outline_geom = (
     rooms_gdf.geometry.buffer(wall_bridge_distance)
-    .unary_union
+    .union_all()
     .buffer(-wall_bridge_distance)
 )
 
@@ -203,7 +219,7 @@ ax2.set_title("Target: Generated Rooms", fontsize=14, fontweight="bold")
 ax2.axis("equal")
 ax2.axis("off")
 
-plt.suptitle(f"Generative Task Data Pairing (Plan ID: {sample_plan_id})", fontsize=16)
+plt.suptitle(f"Generative Task Data Pairing (Unit ID: {sample_unit_id})", fontsize=16)
 plt.tight_layout()
 plt.show()
 ```
