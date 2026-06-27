@@ -150,6 +150,29 @@ def split_by_plan(records: list[dict], val_frac: float = 0.15, seed: int = SEED)
     return {r["unit_id"]: ("val" if r["plan_id"] in val_plans else "train") for r in records}
 
 
+def room_count_distribution(records: list[dict]) -> dict[str, Any]:
+    """Histogram + percentiles of rooms-per-unit, with a suggested slot count.
+
+    MAX_ROOMS_K (the model's fixed slot count) should be chosen from real data;
+    ``suggested_max_rooms_k`` is the 99th percentile rounded up, i.e. the
+    smallest slot count that fits ~99% of units. Reported so the choice is
+    data-driven and auditable.
+    """
+    import numpy as np
+
+    counts = [int(r["n_rooms"]) for r in records]
+    if not counts:
+        return {"histogram": {}, "p50": 0, "p90": 0, "p95": 0, "p99": 0,
+                "suggested_max_rooms_k": 0}
+    hist = Counter(counts)
+    pcts = {f"p{q}": float(np.percentile(counts, q)) for q in (50, 90, 95, 99)}
+    return {
+        "histogram": {int(k): int(v) for k, v in sorted(hist.items())},
+        **pcts,
+        "suggested_max_rooms_k": int(np.ceil(pcts["p99"])),
+    }
+
+
 def split_summary(records: list[dict], split: dict[int, str]) -> dict[str, Any]:
     """Unit- and plan-level split counts plus an explicit leakage check.
 
@@ -221,6 +244,7 @@ def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
         "n_floors": int(manifest["floor_id"].nunique()),
         "split_counts": manifest["split"].value_counts().to_dict(),
         "split_summary": split_summary(records, split),
+        "room_count_distribution": room_count_distribution(records),
         "rooms_per_unit": {
             "min": int(manifest["n_rooms"].min()),
             "median": float(manifest["n_rooms"].median()),

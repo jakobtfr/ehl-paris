@@ -91,6 +91,14 @@ def test_report_has_leakage_checked_split_summary(tmp_path, monkeypatch):
     assert sum(summary["unit_counts"].values()) == 2
 
 
+def test_report_includes_room_count_distribution(tmp_path, monkeypatch):
+    _, _, report = _run(tmp_path, monkeypatch)
+    dist = report["room_count_distribution"]
+    # JSON serialises histogram keys as strings; both usable units have 2 rooms.
+    assert dist["histogram"] == {"2": 2}
+    assert dist["suggested_max_rooms_k"] == 2
+
+
 def test_report_label_frequencies_cover_known_rooms(tmp_path, monkeypatch):
     _, _, report = _run(tmp_path, monkeypatch)
     freqs = report["label_frequencies"]

@@ -7,6 +7,35 @@ This file is the running handoff log. Newest iteration on top.
 
 ---
 
+## Iteration 7 — room-count distribution for MAX_ROOMS_K
+
+**Files changed**
+- `src/floorgen/data/preprocess.py` — new `room_count_distribution(records)` returning a
+  rooms-per-unit `histogram`, `p50/p90/p95/p99`, and `suggested_max_rooms_k`
+  (= ceil(p99), the smallest slot count fitting ~99% of units). Added to the report under
+  `room_count_distribution`.
+- `tests/test_data_roomdist.py` — new unit tests (uniform collapse, histogram, percentile
+  monotonicity, suggested-slot bounds, empty-safe).
+- `tests/test_data_report.py` — added an end-to-end assertion that the field reaches the
+  report (note: JSON serialises histogram keys as strings).
+
+**Why** — `config.MAX_ROOMS_K` is documented as "should be set from the processed
+room-count distribution before training". The report now provides that distribution so the
+slot count is a data-driven, auditable choice. I do **not** edit `config.py` (not my path);
+this is a shared-file handoff candidate once real MSD numbers are in.
+
+**Shared-file request (added)**
+- `src/floorgen/config.py`: once preprocessing has run on real MSD data, set `MAX_ROOMS_K`
+  from `room_count_distribution.suggested_max_rooms_k` in the report (owner of config.py).
+
+**Tests run**
+- `uv run --extra dev pytest tests -q` -> 103 passed.
+- `uv run --extra dev ruff check src/floorgen/data tests` -> clean.
+
+**Blockers** — none new.
+
+---
+
 ## Iteration 6 — outline construction + shell selection tests
 
 **Files changed**
