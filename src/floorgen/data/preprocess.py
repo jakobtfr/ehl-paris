@@ -24,7 +24,7 @@ from typing import Any
 from ..config import PATHS, ROOM_NAME_TO_IDX, SEED
 from ..seeding import seed_everything
 from .normalize import fit_transform, scale_features
-from .outline import build_outline, canonical_room_name
+from .outline import build_outline, classify_room
 
 REQUIRED_COLS = {
     "geom", "unit_id", "plan_id", "floor_id",
@@ -48,9 +48,15 @@ def _load(csv_path: Path) -> Any:
     return gpd.GeoDataFrame(df, geometry="geom")
 
 
-def build_records(gdf: Any, limit_units: int = 0) -> tuple[list[dict], int]:
-    """One record per unit_id: outline, rooms, transform, scale features, meta."""
+def build_records(gdf: Any, limit_units: int = 0) -> tuple[list[dict], int, Counter]:
+    """One record per unit_id: outline, rooms, transform, scale features, meta.
+
+    Returns ``(records, skipped, unmapped)`` where ``unmapped`` counts the raw
+    ``subtype=...|roomtype=...`` sources that fell back to 'Structure' because
+    they were not recognised, so unknown labels stay auditable.
+    """
     records: list[dict] = []
+    unmapped: Counter = Counter()
     unit_ids = list(gdf["unit_id"].dropna().unique())
     if limit_units:
         unit_ids = unit_ids[:limit_units]
@@ -76,7 +82,10 @@ def build_records(gdf: Any, limit_units: int = 0) -> tuple[list[dict], int]:
 
         rooms = []
         for _, row in u.iterrows():
-            label = canonical_room_name(row.get("entity_subtype"), row.get("roomtype"))
+            subtype, roomtype = row.get("entity_subtype"), row.get("roomtype")
+            label, matched = classify_room(subtype, roomtype)
+            if not matched:
+                unmapped[f"subtype={subtype}|roomtype={roomtype}"] += 1
             geom = row["geom"]
             rooms.append({
                 "label": label,
@@ -95,7 +104,7 @@ def build_records(gdf: Any, limit_units: int = 0) -> tuple[list[dict], int]:
             "scale_features": asdict(feats),
             "rooms": rooms,
         })
-    return records, skipped
+    return records, skipped, unmapped
 
 
 def split_by_plan(records: list[dict], val_frac: float = 0.15, seed: int = SEED) -> dict[int, str]:
@@ -111,8 +120,11 @@ def split_by_plan(records: list[dict], val_frac: float = 0.15, seed: int = SEED)
 
 
 def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
-                  reports_dir: Path, skipped: int) -> None:
+                  reports_dir: Path, skipped: int,
+                  unmapped: Counter | None = None) -> None:
     import pandas as pd
+
+    unmapped = unmapped or Counter()
 
     out_dir.mkdir(parents=True, exist_ok=True)
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -162,6 +174,8 @@ def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
             "max": float(manifest["area_m2"].max()),
         },
         "label_frequencies": dict(label_counter.most_common()),
+        "n_unmapped_rooms": int(sum(unmapped.values())),
+        "unmapped_label_sources": dict(unmapped.most_common(20)),
     }
     (reports_dir / "preprocess_report.json").write_text(json.dumps(report, indent=2))
     print(json.dumps(report, indent=2))
@@ -181,12 +195,12 @@ def main() -> int:
     args = parse_args()
     seed_everything(SEED)
     gdf = _load(args.csv)
-    records, skipped = build_records(gdf, limit_units=args.limit_units)
+    records, skipped, unmapped = build_records(gdf, limit_units=args.limit_units)
     if not records:
         print("error: no usable units produced.")
         return 1
     split = split_by_plan(records, val_frac=args.val_frac, seed=SEED)
-    write_outputs(records, split, args.out, args.reports, skipped)
+    write_outputs(records, split, args.out, args.reports, skipped, unmapped)
     return 0
 
 
