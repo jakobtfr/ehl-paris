@@ -79,6 +79,7 @@ src/floorgen/
     mrr.py             MRR encode/decode + deterministic validity-repair layer
     boxes.py           axis-aligned fallback representation
     oracle_gate.py     MRR reconstruction gate (go/no-go before training)
+    README.md          representation contract documentation
   eval/
     render.py          MSD-parity rasteriser (torch-free)
     prdc.py            density/coverage (vendored clovaai PRDC, numpy-only)
@@ -86,9 +87,14 @@ src/floorgen/
   demo/
     app.py             Gradio demo UI
     presets.json       real MSD apartment outlines for the demo
+scripts/
+  smoke_test.py        standalone pipeline smoke test (no deps beyond core)
+  evaluate.py          full evaluation CLI (generate → validate → render → metrics)
+  export_batch.py      batch export generated layouts to Parquet/CSV
 tests/
   test_contract.py     contract tests (generate() guarantees)
   test_repr.py         MRR round-trip tests
+  test_repair.py       validity-repair layer tests
   test_eval.py         evaluation pipeline tests
   test_export.py       export utilities tests
 ```
