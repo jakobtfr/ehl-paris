@@ -75,6 +75,21 @@ def test_array_decode_clamps_label_indices_to_taxonomy():
     assert [m.label_idx for m in array_to_mrrs(arr)] == [0, len(ROOM_NAMES) - 1, 0]
 
 
+def test_nonfinite_mrr_geometry_is_empty_and_skipped_by_repair():
+    invalids = [
+        RoomMRR(math.nan, 1, 2, 2, 0.0, 0),
+        RoomMRR(1, 1, 2, 2, math.inf, 0),
+    ]
+
+    assert all(not mrr.has_finite_geometry for mrr in invalids)
+    assert all(mrr.to_polygon().is_empty for mrr in invalids)
+
+    outline = box(0, 0, 2, 2)
+    part = repair_partition([*invalids, RoomMRR(1, 1, 2, 2, 0.0, 7)], outline)
+
+    assert [(round(poly.area, 6), label) for poly, label in part] == [(4.0, 7)]
+
+
 def test_repair_contains_and_partitions():
     outline = box(0, 0, 10, 10)
     mrrs = [
