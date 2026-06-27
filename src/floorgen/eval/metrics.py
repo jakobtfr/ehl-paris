@@ -36,20 +36,23 @@ def validity_metrics(
         return {"outside_frac": 0.0, "overlap_frac": 0.0, "gap_frac": 1.0,
                 "invalid_rate": 0.0, "n_rooms": 0}
 
-    polys = [p for p, _ in rooms]
+    raw_polys = [p for p, _ in rooms]
+    invalid = sum(0 if p.is_valid else 1 for p in raw_polys)
+    # Repair invalid geometries for area computation (buffer(0) is standard fix)
+    polys = [p.buffer(0) if not p.is_valid else p for p in raw_polys]
+
     union = unary_union(polys)
     covered = union.intersection(outline).area
     outside = sum(max(p.difference(outline).area, 0.0) for p in polys)
-    overlap = sum(p.area for p in polys) - union.area  # double-counted area
+    overlap = sum(p.area for p in polys) - union.area
     gap = max(oa - covered, 0.0)
-    invalid = sum(0 if p.is_valid else 1 for p in polys)
 
     return {
         "outside_frac": outside / oa,
         "overlap_frac": max(overlap, 0.0) / oa,
         "gap_frac": gap / oa,
-        "invalid_rate": invalid / len(polys),
-        "n_rooms": len(polys),
+        "invalid_rate": invalid / len(rooms),
+        "n_rooms": len(rooms),
     }
 
 
