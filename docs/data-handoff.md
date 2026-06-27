@@ -7,6 +7,32 @@ This file is the running handoff log. Newest iteration on top.
 
 ---
 
+## Iteration 3 — transform round-trip invariants
+
+**Files changed**
+- `tests/test_data_transform.py` — new, synthetic geometry only. No production change.
+
+Locks the critical metric round-trip the renderer depends on:
+- `fit_transform` scale is exactly `MODEL_SPACE_SIZE / max(dx, dy)` (= `256 / max(dx, dy)`),
+  using the larger bbox dimension.
+- normalized geometry fits the 256-unit box and is centred on the origin.
+- `invert(normalize(g)) == g` (area + per-coordinate).
+- the divide-by-zero guard returns `scale == 1.0` only for a true zero-extent point
+  (a line still has one nonzero delta).
+- `scale_features` values for a known rectangle (area, bbox, aspect, perimeter, compactness).
+
+Note: writing these surfaced that the scale guard triggers only when *both* deltas are
+zero — a degenerate line still scales normally. Behaviour is correct; the test now
+documents it.
+
+**Tests run**
+- `uv run --extra dev pytest tests -q` -> 70 passed.
+- `uv run --extra dev ruff check src/floorgen/data tests` -> clean.
+
+**Blockers** — none new.
+
+---
+
 ## Iteration 2 — tolerate invalid geometries on load
 
 **Files changed**
