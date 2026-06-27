@@ -7,6 +7,30 @@ This file is the running handoff log. Newest iteration on top.
 
 ---
 
+## Iteration 5 — end-to-end report completeness
+
+**Files changed**
+- `tests/test_data_report.py` — new, synthetic CSV only. No production change.
+
+Drives `main()` over a synthetic CSV (mix of usable units, a single-room unit, a
+malformed-WKT row, and a non-area row) and asserts the full output contract:
+- `units.jsonl` (one line per usable unit) and `manifest.parquet` are written.
+- report `n_units` / `n_skipped` / `n_invalid_geom_rows` counts are correct.
+- `n_unmapped_rooms` and `unmapped_label_sources` flag the unknown label.
+- `split_summary` is present with `plan_leakage == []`.
+- `label_frequencies` covers the known room classes.
+
+This is the first test that exercises `write_outputs` and the CLI `main()` path end to
+end, so all report fields added in iterations 1, 2 and 4 are now covered.
+
+**Tests run**
+- `uv run --extra dev pytest tests -q` -> 83 passed.
+- `uv run --extra dev ruff check src/floorgen/data tests` -> clean.
+
+**Blockers** — none new.
+
+---
+
 ## Iteration 4 — plan-level split summary + leakage check
 
 **Files changed**
