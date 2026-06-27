@@ -1,17 +1,34 @@
-# Davis x Paris 2026 Challenge Brief
+# Mirror Mirror on the Wall: Who Has the Best Room of Them All?
 
-## Mirror Mirror on the Wall: Who has the Best Room of Them All?
+Sponsored by Davis AI. Prize: EUR 500.
 
-Given only the outline of an apartment, generate a complete and plausible set
-of interior rooms as vector polygons using a diffusion or flow-matching model.
-Entries are scored on the realism and diversity of the generated layouts,
-measured by FID, density, and coverage against real Swiss residential floor
-plans.
+## Challenge
 
-## Task
+Given only the outline of an apartment, its outer walls and nothing else,
+generate a complete and plausible set of interior rooms as vector polygons. The
+model decides where the kitchen, bedrooms, bathroom, hallway, and living spaces
+go, then draws each one as a clean polygon that fills the available floor area.
 
-This is a conditional generation task. The model receives one input, the
-apartment outline, and must produce the rooms that fill it:
+The constraint that makes this interesting: the layout must be produced
+generatively, using a diffusion or flow-matching model. Submissions are not
+judged against one correct answer. They are judged against the distribution of
+real Swiss residential floor plans. A strong submission produces layouts that
+are both:
+
+- **Realistic:** they look like something an architect would actually draw.
+- **Diverse:** given the same outline, the model can propose several genuinely
+  different valid arrangements, rather than one memorised template.
+
+## Inputs and Outputs
+
+- **Input:** boundary polygon of an apartment, used as the condition.
+- **Output:** set of interior room polygons that partition the apartment, each
+  labelled by room type.
+- **Method constraint:** the generator must be a diffusion or flow-matching
+  model, not a deterministic solver or a purely rule-based partitioner.
+
+The model receives one input, the apartment outline, and must produce the rooms
+that fill it:
 
 - where each room sits
 - each room's shape
@@ -20,12 +37,6 @@ apartment outline, and must produce the rooms that fill it:
 Rooms must be returned as vector polygons, never as a pixel grid. Teams may
 choose how to encode the outline, which diffusion or flow-matching model to
 build, and how to parameterise rooms.
-
-### Input and Output
-
-- **Input:** apartment outline, used as the condition.
-- **Output:** typed room polygons, such as living room, kitchen, corridor,
-  bedroom, and bathroom.
 
 From a bare outline, the model fills in typed rooms. The outline carries no
 rooms, walls, or graph: it is the only condition.
@@ -58,26 +69,86 @@ Teams are free to choose:
 
 The representation may be anything except a pixel grid.
 
-## Evaluation
+## Scoring
 
-Two metrics are used:
+Submissions are evaluated on two axes, realism and diversity, against a held-out
+set of real Swiss floor plans.
 
-- **FID:** rewards realism.
-- **Density and coverage:** reward covering the true variety of layouts and
-  penalise mode collapse or copying the data.
+### FID: Frechet Inception Distance
+
+FID measures how close the distribution of generated layouts is to the
+distribution of real floor plans. Rather than comparing one generated plan to
+one real plan, it compares the full population of outputs to the full
+population of real designs in a learned feature space. Lower FID means generated
+layouts are statistically harder to distinguish from real ones. It rewards
+plausibility and penalises visual artefacts, implausible room shapes, and mode
+collapse.
+
+### Density and Coverage
+
+Density and coverage separate the two things FID blends together:
+
+- **Density:** do generated layouts land in regions where real layouts are
+  common? This is fidelity: outputs should be high-quality and on-distribution.
+- **Coverage:** do generated layouts span the full variety of real layouts? This
+  is diversity: outputs should explore the design space rather than repeating
+  one safe answer.
+
+A model that memorises a few safe layouts can score well on density but should
+be punished on coverage. A model that produces wild variety but unrealistic
+plans should score high coverage but low density. The goal is to score well on
+both.
 
 Scoring is run by the organisers on a held-out set of plans with a fixed
 protocol: reference set, rasterisation, sample count, and seed `42`. This makes
 scores comparable across teams.
 
-## Rules and Submission
+## Rules and Integrity
 
 - **Time:** Saturday to Sunday.
 - **Model:** diffusion- or flow-matching-based, trained from scratch.
 - **Seed:** fixed random seed `42` throughout data handling, training,
   sampling, and evaluation.
-- **Submit:** training and generation code, model weights, a `generate(outline)`
-  entry point that returns room polygons, and a short methodology writeup.
+- **Honest reporting:** results must be honest and reproducible.
+- **No leakage:** do not train on the test/evaluation set or otherwise leak
+  held-out data into training.
+- **Metrics:** report correct metrics.
+
+## Submission
+
+| Field | What it is | Format | Required |
+| --- | --- | --- | --- |
+| Pitch deck | Short deck explaining the approach and results | `.pdf` or `.pptx` | Yes |
+| GitHub repository | Code, public or private | Repo link | Yes |
+| Live demo | Working demo of the model | URL | Yes |
+
+The repository should include training and generation code, model weights, a
+`generate(outline)` entry point that returns room polygons, and a short
+methodology writeup.
+
+Teams must include their full working-session record: the
+`entire/checkpoints/v1` branch, with at least one prompt. This is captured for a
+process-quality review and is advisory only. It does not count toward placement.
+
+Submissions with a GitHub repository receive an automated, LLM-assisted code
+review. Review weighting:
+
+| Criterion | Weight |
+| --- | ---: |
+| Code quality | 30% |
+| Architecture | 25% |
+| Challenge alignment | 25% |
+| Innovation | 20% |
+
+## At a Glance
+
+- **Sponsor:** Davis AI
+- **Prize:** EUR 500
+- **Type:** scored challenge, counts for league points
+- **Task:** generative floor-plan completion from an apartment outline
+- **Model class:** diffusion or flow matching
+- **Metrics:** FID, density, coverage
+- **Dataset:** real Swiss residential floor plans
 
 ## Appendix: Provided Data-Construction Script
 
