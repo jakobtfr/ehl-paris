@@ -7,6 +7,29 @@ This file is the running handoff log. Newest iteration on top.
 
 ---
 
+## Iteration 2 — tolerate invalid geometries on load
+
+**Files changed**
+- `src/floorgen/data/preprocess.py` — new `parse_area_geometries(df) -> (gdf, n_invalid)`
+  and `_try_load_wkt(value)`. `_load` now returns `(gdf, n_invalid)` and delegates schema
+  validation + area filtering + per-row WKT parsing to `parse_area_geometries`. Malformed,
+  non-string (NaN), or empty geometries are dropped and counted instead of raising.
+  `write_outputs` gains `n_invalid_geom` and reports `n_invalid_geom_rows`.
+- `tests/test_data_load.py` — new, synthetic CSV/DataFrame only.
+
+**Data assumptions (new this iteration)**
+- A WKT cell is valid only if it is a non-empty string that `shapely.wkt.loads` accepts and
+  the result is non-empty. Everything else is counted in `n_invalid_geom_rows` and dropped.
+- `_load` return arity changed from `gdf` to `(gdf, n_invalid)`. Only `main` (my file) calls it.
+
+**Tests run**
+- `uv run --extra dev pytest tests -q` -> 33 passed.
+- `uv run --extra dev ruff check src/floorgen/data tests` -> clean.
+
+**Blockers** — none new.
+
+---
+
 ## Iteration 1 — auditable unknown-label handling
 
 **Files changed**
