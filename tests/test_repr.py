@@ -138,6 +138,21 @@ def test_partition_accounting_reports_valid_repair_fractions():
     assert accounting.outside_frac < 1e-9
 
 
+def test_partition_accounting_reports_nonzero_fractions():
+    outline = box(0, 0, 4, 4)
+    accounting = partition_accounting(
+        [
+            (box(0, 0, 3, 2), 0),
+            (box(2, 0, 5, 2), 7),
+        ],
+        outline,
+    )
+
+    assert accounting.overlap_frac == pytest.approx(0.125)
+    assert accounting.gap_frac == pytest.approx(0.5)
+    assert accounting.outside_frac == pytest.approx(0.125)
+
+
 def test_repair_rejects_large_overlap_with_limit_in_message():
     outline = box(0, 0, 10, 10)
     mrrs = [
