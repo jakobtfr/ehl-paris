@@ -7,7 +7,7 @@ import math
 import numpy as np
 import pytest
 from shapely import affinity
-from shapely.geometry import GeometryCollection, LineString, MultiPolygon, box
+from shapely.geometry import GeometryCollection, LineString, MultiPolygon, Polygon, box
 
 from floorgen.config import ROOM_NAMES
 from floorgen.repr.mrr import (
@@ -31,6 +31,20 @@ def test_polygon_to_mrr_preserves_rotated_rectangle_geometry():
     assert geometry_iou(mrr.to_polygon(), p) > 0.999
     assert encode_decode_iou(p, label_idx=0) > 0.999
     assert mrr.w >= mrr.h
+
+
+def test_polygon_to_mrr_returns_degenerate_mrr_for_empty_polygon():
+    mrr = polygon_to_mrr(Polygon(), label_idx=7)
+
+    assert (mrr.cx, mrr.cy, mrr.w, mrr.h, mrr.angle, mrr.label_idx) == (
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        7,
+    )
+    assert mrr.to_polygon().is_empty
 
 
 def test_angle_distance_wraps_modulo_pi():
