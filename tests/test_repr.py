@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 
 from shapely import affinity
-from shapely.geometry import box
+from shapely.geometry import MultiPolygon, box
 
 from floorgen.repr.mrr import (
     RoomMRR,
@@ -69,3 +69,19 @@ def test_repair_contains_and_partitions():
         assert p.difference(outline.buffer(1e-6)).area < 1e-6
     assert total <= outline.area * 1.001
     assert total >= outline.area * 0.8
+
+
+def test_repair_keeps_accepted_disconnected_gap_piece():
+    outline = MultiPolygon([box(0, 0, 2, 2), box(3, 0, 4, 1)])
+    part = repair_partition(
+        [RoomMRR(1, 1, 2, 2, 0.0, 0)],
+        outline,
+        min_area=0.01,
+        max_gap_frac=0.25,
+    )
+
+    assert len(part) == 2
+    assert sum(p.area for p, _ in part) == outline.area
+    assert all(label == 0 for _, label in part)
+    for p, _ in part:
+        assert p.difference(outline).area < 1e-9

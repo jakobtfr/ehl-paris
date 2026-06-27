@@ -199,8 +199,7 @@ def repair_partition(
             if piece.area <= 0:
                 continue
             idx = _nearest_room_idx(piece, resolved)
-            merged = part_union(resolved[idx][0], piece)
-            resolved[idx] = (_largest_polygon(merged), resolved[idx][1])
+            _merge_room_piece(resolved, idx, piece)
 
     out: list[tuple[Polygon, int]] = []
     for poly, label in resolved:
@@ -230,6 +229,18 @@ def _largest_polygon(geom: BaseGeometry) -> Polygon:
     if not polys:
         return geom if isinstance(geom, Polygon) else Polygon()
     return max(polys, key=lambda p: p.area)
+
+
+def _merge_room_piece(rooms: list[tuple[Polygon, int]], idx: int, piece: Polygon) -> None:
+    poly, label = rooms[idx]
+    parts = sorted(
+        _iter_polygons(part_union(poly, piece)),
+        key=lambda p: (-p.intersection(poly).area, -p.area, p.bounds),
+    )
+    if not parts:
+        return
+    rooms[idx] = (parts[0], label)
+    rooms.extend((part, label) for part in parts[1:])
 
 
 def _nearest_room_idx(piece: Polygon, rooms: list[tuple[Polygon, int]]) -> int:
