@@ -25,6 +25,12 @@ pnpm-debug.log*
 .env.*
 !.env.example
 
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+
 # Dependencies and build output
 node_modules/
 dist/
