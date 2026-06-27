@@ -32,3 +32,12 @@ build/
 coverage/
 .next/
 .turbo/
+
+# Local datasets and generated training artifacts
+/data/raw/
+/data/processed/
+/reports/
+/checkpoints/
+/outputs/
+/runs/
+/wandb/
