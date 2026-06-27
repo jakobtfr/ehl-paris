@@ -45,24 +45,39 @@ def largest_shell(geom: Polygon | MultiPolygon) -> Polygon:
     raise TypeError(f"Unexpected outline geometry type: {geom.geom_type}")
 
 
-def canonical_room_name(entity_subtype: str | None, roomtype: str | None) -> str:
-    """Map an MSD area row to a canonical ROOM_NAMES label.
+def classify_room(entity_subtype: str | None, roomtype: str | None) -> tuple[str, bool]:
+    """Map an MSD area row to a canonical ROOM_NAMES label, auditably.
+
+    Returns ``(label, matched)``. ``matched`` is True when the raw subtype or
+    roomtype was explicitly recognised; False when the value fell through to the
+    'Structure' default. The caller reports the unmatched cases so a new MSD
+    subtype or a typo surfaces in the preprocessing report instead of silently
+    becoming Structure.
 
     Prefers the explicit subtype mapping (finer-grained); falls back to the
     dataset's own `roomtype` column, then to 'Structure' for anything
-    unrecognised so the partition stays complete and auditable.
+    unrecognised so the partition stays complete.
     """
     if entity_subtype is not None:
         key = str(entity_subtype).strip().upper()
         if key in SUBTYPE_TO_ROOM:
-            return SUBTYPE_TO_ROOM[key]
+            return SUBTYPE_TO_ROOM[key], True
     if roomtype is not None:
         rt = str(roomtype).strip()
         # The CSV roomtype values already match ROOM_NAMES casing in most cases.
         for name in ("Bedroom", "Livingroom", "Kitchen", "Dining", "Corridor",
                      "Stairs", "Storeroom", "Bathroom", "Balcony"):
             if rt.lower() == name.lower():
-                return name
+                return name, True
         if rt.lower() in ("structure", "shaft", "elevator", "void"):
-            return "Structure"
-    return "Structure"
+            return "Structure", True
+    return "Structure", False
+
+
+def canonical_room_name(entity_subtype: str | None, roomtype: str | None) -> str:
+    """Canonical ROOM_NAMES label for an MSD area row (label only).
+
+    Thin wrapper over :func:`classify_room` for callers that do not need the
+    match/fallback flag.
+    """
+    return classify_room(entity_subtype, roomtype)[0]
