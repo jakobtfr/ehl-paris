@@ -6,11 +6,12 @@ import math
 
 import pytest
 from shapely import affinity
-from shapely.geometry import MultiPolygon, box
+from shapely.geometry import GeometryCollection, LineString, MultiPolygon, box
 
 from floorgen.repr.mrr import (
     RepairRejected,
     RoomMRR,
+    _iter_polygons,
     array_to_mrrs,
     encode_decode_iou,
     geometry_iou,
@@ -112,3 +113,15 @@ def test_repair_keeps_accepted_disconnected_gap_piece():
     assert all(label == 0 for _, label in part)
     for p, _ in part:
         assert p.difference(outline).area < 1e-9
+
+
+def test_iter_polygons_keeps_geometry_collection_polygon_parts():
+    geom = GeometryCollection(
+        [
+            box(0, 0, 1, 1),
+            LineString([(2, 0), (2, 1)]),
+            MultiPolygon([box(3, 0, 4, 1)]),
+        ]
+    )
+
+    assert [p.area for p in _iter_polygons(geom)] == [1.0, 1.0]

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from shapely import affinity
-from shapely.geometry import MultiPolygon, Polygon
+from shapely.geometry import GeometryCollection, MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
@@ -243,6 +243,9 @@ def _iter_polygons(geom: BaseGeometry) -> Iterable[Polygon]:
         for g in geom.geoms:
             if not g.is_empty:
                 yield g
+    elif isinstance(geom, GeometryCollection):
+        for g in geom.geoms:
+            yield from _iter_polygons(g)
 
 
 def _largest_polygon(geom: BaseGeometry) -> Polygon:
