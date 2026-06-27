@@ -108,6 +108,9 @@ def _canonical_label_idx(label_idx: float) -> int:
 def polygon_to_mrr(poly: Polygon, label_idx: int) -> RoomMRR:
     """Encode a room polygon as its Shapely minimum rotated rectangle."""
 
+    if poly.is_empty or poly.area <= 0:
+        return RoomMRR(0.0, 0.0, 0.0, 0.0, 0.0, label_idx)
+
     rect = poly.minimum_rotated_rectangle
     coords = list(rect.exterior.coords)[:-1]
     if len(coords) != 4:
