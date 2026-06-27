@@ -113,6 +113,23 @@ def polygon_to_mrr(poly: Polygon, label_idx: int) -> RoomMRR:
     )
 
 
+def geometry_iou(a: BaseGeometry, b: BaseGeometry) -> float:
+    """Area IoU for two Shapely geometries."""
+
+    union = a.union(b).area
+    if union <= 0:
+        return 0.0
+    return float(a.intersection(b).area / union)
+
+
+def encode_decode_iou(poly: Polygon, label_idx: int = 0) -> float:
+    """IoU between a polygon and its raw MRR encode/decode reconstruction."""
+
+    if poly.is_empty or poly.area <= 0:
+        return 0.0
+    return geometry_iou(poly, polygon_to_mrr(poly, label_idx).to_polygon())
+
+
 def mrrs_to_array(mrrs: list[RoomMRR]) -> np.ndarray:
     """Pack MRRs into an (N, 6) array: cx, cy, w, h, angle, label_idx."""
 

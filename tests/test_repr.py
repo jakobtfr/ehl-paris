@@ -12,6 +12,8 @@ from floorgen.repr.mrr import (
     RepairRejected,
     RoomMRR,
     array_to_mrrs,
+    encode_decode_iou,
+    geometry_iou,
     mrrs_to_array,
     polygon_to_mrr,
     repair_partition,
@@ -22,9 +24,8 @@ from floorgen.repr.mrr import (
 def test_polygon_to_mrr_preserves_rotated_rectangle_geometry():
     p = affinity.rotate(box(0, 0, 4, 2), 30, origin="centroid")
     mrr = polygon_to_mrr(p, label_idx=0)
-    decoded = mrr.to_polygon()
-    iou = decoded.intersection(p).area / decoded.union(p).area
-    assert iou > 0.999
+    assert geometry_iou(mrr.to_polygon(), p) > 0.999
+    assert encode_decode_iou(p, label_idx=0) > 0.999
     assert mrr.w >= mrr.h
 
 
