@@ -141,7 +141,10 @@ uv run python -B -c "from shapely.geometry import box; from floorgen.generate im
 uv run --extra dev pytest -q
 uv run --extra dev ruff check src tests
 
-# 5. Launch Gradio demo (requires: pip install gradio)
+# 5. Quick smoke test (no external data or gradio needed)
+python scripts/smoke_test.py
+
+# 6. Launch Gradio demo (requires: pip install gradio)
 uv run python app.py
 ```
 
