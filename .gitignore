@@ -7,6 +7,12 @@ Thumbs.db
 .vscode/
 *.swp
 
+# Local agent/tool state
+.claude/
+.codex/
+.cursor/
+.entire/
+
 # Logs
 *.log
 npm-debug.log*
@@ -26,4 +32,3 @@ build/
 coverage/
 .next/
 .turbo/
-
