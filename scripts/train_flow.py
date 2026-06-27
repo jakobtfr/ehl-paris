@@ -33,6 +33,24 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--max-steps", type=int, default=0, help="0 means no explicit cap.")
+    parser.add_argument(
+        "--max-train-seconds",
+        type=int,
+        default=0,
+        help="0 means no wall-clock cap; otherwise stop gracefully and save.",
+    )
+    parser.add_argument(
+        "--log-every-steps",
+        type=int,
+        default=0,
+        help="Print JSON progress every N optimizer steps; 0 disables progress logs.",
+    )
+    parser.add_argument(
+        "--checkpoint-every-steps",
+        type=int,
+        default=0,
+        help="Rewrite the checkpoint every N optimizer steps; 0 saves only at the end.",
+    )
     parser.add_argument("--limit", type=int, default=0, help="0 means use all records.")
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--k", type=int, default=MAX_ROOMS_K)
@@ -58,6 +76,12 @@ def validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--batch-size must be positive")
     if args.max_steps < 0:
         raise ValueError("--max-steps must be non-negative")
+    if args.max_train_seconds < 0:
+        raise ValueError("--max-train-seconds must be non-negative")
+    if args.log_every_steps < 0:
+        raise ValueError("--log-every-steps must be non-negative")
+    if args.checkpoint_every_steps < 0:
+        raise ValueError("--checkpoint-every-steps must be non-negative")
     if args.limit < 0:
         raise ValueError("--limit must be non-negative")
     if args.lr <= 0.0:
@@ -105,8 +129,44 @@ def main() -> int:
     started = time.time()
     initial_loss: float | None = None
     final_loss: float | None = None
+    latest_metrics: dict[str, float] = {}
     steps = 0
+    completed_epochs = 0
+
+    def checkpoint_payload() -> dict:
+        return {
+            "state_dict": model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            "config": {
+                "num_types": len(ROOM_NAMES),
+                "k": args.k,
+                "d_model": args.hidden,
+                "boundary_points": args.boundary_points,
+            },
+            "label_names": ROOM_NAMES,
+            "train": {
+                "data": str(args.data),
+                "split": args.split,
+                "epochs": args.epochs,
+                "completed_epochs": completed_epochs,
+                "batch_size": args.batch_size,
+                "steps": steps,
+                "lr": args.lr,
+                "initial_loss": initial_loss,
+                "final_loss": final_loss,
+                "latest_metrics": latest_metrics,
+                "wall_seconds": time.time() - started,
+                "device": str(device),
+                "device_name": torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu",
+            },
+        }
+
+    def save_checkpoint() -> None:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        torch.save(checkpoint_payload(), args.out)
+
     for _epoch in range(args.epochs):
+        stopped_early = False
         for batch in loader:
             batch = batch.to(device)
             optimizer.zero_grad(set_to_none=True)
@@ -120,41 +180,33 @@ def main() -> int:
             loss_value = float(result.total.detach().cpu())
             initial_loss = loss_value if initial_loss is None else initial_loss
             final_loss = loss_value
+            latest_metrics = result.detached_scalars()
             steps += 1
-            if args.max_steps and steps >= args.max_steps:
+            if args.log_every_steps and steps % args.log_every_steps == 0:
+                print(json.dumps({"event": "progress", "step": steps, **latest_metrics}), flush=True)
+            if args.checkpoint_every_steps and steps % args.checkpoint_every_steps == 0:
+                save_checkpoint()
+                print(
+                    json.dumps({"event": "checkpoint", "step": steps, "checkpoint": str(args.out)}),
+                    flush=True,
+                )
+            stop_for_steps = args.max_steps and steps >= args.max_steps
+            stop_for_time = args.max_train_seconds and (time.time() - started) >= args.max_train_seconds
+            if stop_for_steps or stop_for_time:
+                stopped_early = True
                 break
-            if args.max_steps and steps >= args.max_steps:
-                break
+        if not stopped_early:
+            completed_epochs += 1
+        stop_for_steps = args.max_steps and steps >= args.max_steps
+        stop_for_time = args.max_train_seconds and (time.time() - started) >= args.max_train_seconds
+        if stop_for_steps or stop_for_time:
+            break
 
     if steps == 0:
         raise RuntimeError("training produced zero optimizer steps; no checkpoint was saved")
 
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    checkpoint = {
-        "state_dict": model.state_dict(),
-        "config": {
-            "num_types": len(ROOM_NAMES),
-            "k": args.k,
-            "d_model": args.hidden,
-            "boundary_points": args.boundary_points,
-        },
-        "label_names": ROOM_NAMES,
-        "train": {
-            "data": str(args.data),
-            "split": args.split,
-            "epochs": args.epochs,
-            "batch_size": args.batch_size,
-            "steps": steps,
-            "lr": args.lr,
-            "initial_loss": initial_loss,
-            "final_loss": final_loss,
-            "wall_seconds": time.time() - started,
-            "device": str(device),
-            "device_name": torch.cuda.get_device_name(0) if device.type == "cuda" else "cpu",
-        },
-    }
-    torch.save(checkpoint, args.out)
-    print(json.dumps({"checkpoint": str(args.out), **checkpoint["train"]}, indent=2))
+    save_checkpoint()
+    print(json.dumps({"checkpoint": str(args.out), **checkpoint_payload()["train"]}, indent=2))
     return 0
 
 
