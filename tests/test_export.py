@@ -235,3 +235,52 @@ class TestExportCSV:
 
         assert result.returncode != 0
         assert "FLOORGEN_PRESENCE_THRESHOLD must be between 0 and 1" in result.stderr
+
+    def test_export_batch_loads_processed_units_jsonl(self, tmp_path):
+        units = tmp_path / "units.jsonl"
+        units.write_text(
+            json.dumps(
+                {
+                    "unit_id": 101,
+                    "plan_id": 201,
+                    "floor_id": 301,
+                    "split": "test",
+                    "official_split": "test",
+                    "outline_wkt": box(0, 0, 8, 6).wkt,
+                    "rooms": [
+                        {"label": "Bedroom", "label_idx": 0, "wkt": box(0, 0, 4, 6).wkt},
+                        {"label": "Kitchen", "label_idx": 2, "wkt": box(4, 0, 8, 6).wkt},
+                    ],
+                }
+            )
+            + "\n"
+        )
+        out_dir = tmp_path / "export"
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "scripts/export_batch.py",
+                "--units",
+                str(units),
+                "--split",
+                "test",
+                "--format",
+                "csv",
+                "--output-dir",
+                str(out_dir),
+                "--n-samples",
+                "1",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert "Outlines processed: 1" in result.stdout
+        csv_path = next(out_dir.glob("layouts_*.csv"))
+        df = pd.read_csv(csv_path)
+        assert set(df["unit_id"]) == {101}
+        assert set(df["plan_id"]) == {201}
+        assert set(df["official_split"]) == {"test"}

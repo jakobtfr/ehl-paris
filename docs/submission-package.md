@@ -83,7 +83,8 @@ uv run --extra train python scripts/evaluate.py \
   --output reports/eval/test_real_metrics.json
 
 uv run --extra train python scripts/export_batch.py \
-  --outlines data/processed/manifest.parquet \
+  --units data/processed/units.jsonl \
+  --split test \
   --checkpoint checkpoints/flow.pt \
   --format parquet \
   --output-dir reports/submission-layouts

@@ -30,6 +30,13 @@ python scripts/evaluate.py \
 
 # Batch export to Parquet
 python scripts/export_batch.py --demo --format parquet
+
+# Batch export generated layouts for processed units.
+python scripts/export_batch.py \
+  --units data/processed/units.jsonl \
+  --split test \
+  --format parquet \
+  --output-dir reports/submission-layouts
 ```
 
 ## Architecture
