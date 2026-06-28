@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import random
 
-from floorgen.data.preprocess import split_by_plan, split_summary
+import pytest
+
+from floorgen.data.preprocess import split_by_plan, split_predefined_train_test, split_summary
 
 
 def _recs(pairs: list[tuple[int, int]]) -> list[dict]:
@@ -72,3 +74,50 @@ def test_split_summary_detects_leakage():
     leaky = {0: "train", 1: "val"}  # deliberately straddles
     summary = split_summary(recs, leaky)
     assert summary["plan_leakage"] == [5]
+
+
+# --- predefined train/test split ------------------------------------------
+
+def _official_recs() -> list[dict]:
+    recs = _recs([(u, u // 2) for u in range(8)])
+    for rec in recs[:6]:
+        rec["official_split"] = "train"
+    for rec in recs[6:]:
+        rec["official_split"] = "test"
+    return recs
+
+
+def test_predefined_split_keeps_official_test_out_of_train_val():
+    recs = _official_recs()
+    split = split_predefined_train_test(recs, val_frac=0.34, seed=42)
+
+    assert split[6] == "test"
+    assert split[7] == "test"
+    assert {split[u] for u in range(6)} <= {"train", "val"}
+    assert "test" not in {split[u] for u in range(6)}
+
+
+def test_predefined_split_applies_val_only_within_official_train_plans():
+    recs = _official_recs()
+    split = split_predefined_train_test(recs, val_frac=0.34, seed=42)
+
+    val_plans = {r["plan_id"] for r in recs if split[r["unit_id"]] == "val"}
+    test_plans = {r["plan_id"] for r in recs if split[r["unit_id"]] == "test"}
+    assert val_plans
+    assert val_plans.isdisjoint(test_plans)
+
+
+def test_predefined_split_rejects_unknown_source_split():
+    recs = _official_recs()
+    recs[0]["official_split"] = "validation"
+    with pytest.raises(ValueError, match="unsupported official_split"):
+        split_predefined_train_test(recs)
+
+
+def test_predefined_split_rejects_duplicate_unit_across_official_splits():
+    recs = [
+        {"unit_id": 1, "plan_id": 1, "official_split": "train"},
+        {"unit_id": 1, "plan_id": 1, "official_split": "test"},
+    ]
+    with pytest.raises(ValueError, match="appears in both official"):
+        split_predefined_train_test(recs)

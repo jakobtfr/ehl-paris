@@ -26,6 +26,8 @@ from .config import PATHS, ROOM_NAMES, SEED
 from .eval.metrics import validity_metrics
 from .generate import sample_layouts
 
+OutlineInput = BaseGeometry | dict[str, Any]
+
 
 @dataclass
 class ExportConfig:
@@ -44,53 +46,76 @@ def _room_to_record(
     unit_id: str,
     sample_idx: int,
     seed: int,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Flatten a single room dict into an export row."""
     poly = room["polygon"]
-    return {
+    record = {
         "unit_id": unit_id,
         "sample_idx": sample_idx,
         "seed": seed,
         "label": room["label"],
         "label_idx": room["label_idx"],
+        "geom": poly.wkt,
         "wkt": poly.wkt,
         "area_m2": poly.area,
     }
+    if metadata:
+        for key in ("plan_id", "floor_id", "split", "official_split"):
+            if key in metadata:
+                record[key] = metadata[key]
+    return record
+
+
+def _outline_and_metadata(entry: OutlineInput) -> tuple[BaseGeometry, dict[str, Any]]:
+    """Accept bare geometries or processed-unit records with id metadata."""
+    if isinstance(entry, BaseGeometry):
+        return entry, {}
+    outline = entry.get("geometry")
+    if not isinstance(outline, BaseGeometry):
+        raise TypeError("outline record must contain a Shapely geometry field")
+    return outline, dict(entry)
 
 
 def export_layouts(
-    outlines: dict[str, BaseGeometry],
+    outlines: dict[str, OutlineInput],
     cfg: ExportConfig | None = None,
 ) -> pd.DataFrame:
     """Generate and export layouts for a batch of outlines.
 
     Parameters
     ----------
-    outlines : dict mapping unit_id -> Shapely outline geometry
+    outlines : dict mapping unit_id -> Shapely outline geometry, or to a
+        processed-unit metadata dict containing a ``geometry`` field
     cfg : export configuration (defaults to ExportConfig())
 
     Returns
     -------
     DataFrame with one row per room, columns:
-        unit_id, sample_idx, seed, label, label_idx, wkt, area_m2,
-        and optionally validity metrics per sample.
+        unit_id, sample_idx, seed, label, label_idx, geom, wkt, area_m2,
+        optional plan/floor/split metadata, and optionally validity metrics per
+        sample. ``geom`` is the MSD-compatible WKT column; ``wkt`` is retained
+        for older local tooling.
     """
     if cfg is None:
         cfg = ExportConfig()
 
     rows: list[dict[str, Any]] = []
+    failures: list[tuple[str, str]] = []
 
-    for unit_id, outline in outlines.items():
+    for unit_id, entry in outlines.items():
+        outline, metadata = _outline_and_metadata(entry)
         try:
             layouts = sample_layouts(
                 outline, seed=cfg.seed, n_samples=cfg.n_samples, mode="raw"
             )
-        except Exception:
+        except Exception as exc:
+            failures.append((unit_id, str(exc)))
             continue
 
         for sample_idx, layout in enumerate(layouts):
             for room in layout:
-                row = _room_to_record(room, unit_id, sample_idx, cfg.seed)
+                row = _room_to_record(room, unit_id, sample_idx, cfg.seed, metadata)
                 rows.append(row)
 
             if cfg.include_validity:
@@ -99,12 +124,16 @@ def export_layouts(
                 for row in rows[-len(layout):]:
                     row.update({f"v_{k}": v for k, v in vm.items()})
 
+    if not rows:
+        detail = f"; first failure for {failures[0][0]}: {failures[0][1]}" if failures else ""
+        raise RuntimeError(f"layout export produced no room rows{detail}")
+
     df = pd.DataFrame(rows)
     return df
 
 
 def export_to_parquet(
-    outlines: dict[str, BaseGeometry],
+    outlines: dict[str, OutlineInput],
     cfg: ExportConfig | None = None,
 ) -> Path:
     """Full pipeline: generate, validate, and write Parquet + metadata sidecar."""
@@ -137,7 +166,7 @@ def export_to_parquet(
 
 
 def export_to_csv(
-    outlines: dict[str, BaseGeometry],
+    outlines: dict[str, OutlineInput],
     cfg: ExportConfig | None = None,
 ) -> Path:
     """Like export_to_parquet but writes CSV for simpler toolchains."""

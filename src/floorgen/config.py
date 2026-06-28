@@ -92,6 +92,21 @@ class Paths:
     msd_csv: Path = field(
         default_factory=lambda: Path(os.environ.get("MSD_CSV_PATH", "mds_V2_5.372k.csv"))
     )
+    msd_train_csv: Path | None = field(
+        default_factory=lambda: (
+            Path(path) if (path := os.environ.get("MSD_TRAIN_CSV_PATH")) else None
+        )
+    )
+    msd_test_csv: Path | None = field(
+        default_factory=lambda: (
+            Path(path) if (path := os.environ.get("MSD_TEST_CSV_PATH")) else None
+        )
+    )
+    msd_kaggle_dir: Path | None = field(
+        default_factory=lambda: (
+            Path(path) if (path := os.environ.get("MSD_KAGGLE_DIR")) else None
+        )
+    )
     processed_dir: Path = field(
         default_factory=lambda: Path(os.environ.get("FLOORGEN_PROCESSED", "data/processed"))
     )

@@ -49,6 +49,21 @@ def _write_csv(path):
     pd.DataFrame(rows).to_csv(path, index=False)
 
 
+def _write_official_split_csvs(train_path, test_path):
+    train_rows = [
+        _row(_sq(0, 0), 101, 1001, 9001, "BEDROOM", "Bedroom"),
+        _row(_sq(3, 0), 101, 1001, 9001, "KITCHEN", "Kitchen"),
+        _row(_sq(10, 0), 102, 1002, 9002, "BEDROOM", "Bedroom"),
+        _row(_sq(13, 0), 102, 1002, 9002, "BATHROOM", "Bathroom"),
+    ]
+    test_rows = [
+        _row(_sq(20, 0), 201, 2001, 9901, "BEDROOM", "Bedroom"),
+        _row(_sq(23, 0), 201, 2001, 9901, "KITCHEN", "Kitchen"),
+    ]
+    pd.DataFrame(train_rows).to_csv(train_path, index=False)
+    pd.DataFrame(test_rows).to_csv(test_path, index=False)
+
+
 def _run(tmp_path, monkeypatch):
     csv = tmp_path / "synthetic.csv"
     out = tmp_path / "processed"
@@ -60,6 +75,30 @@ def _run(tmp_path, monkeypatch):
     rc = main()
     report = json.loads((reports / "preprocess_report.json").read_text())
     return rc, out, report
+
+
+def _run_official(tmp_path, monkeypatch):
+    train_csv = tmp_path / "official_train.csv"
+    test_csv = tmp_path / "official_test.csv"
+    out = tmp_path / "processed"
+    reports = tmp_path / "reports"
+    _write_official_split_csvs(train_csv, test_csv)
+    monkeypatch.setattr(sys, "argv", [
+        "preprocess",
+        "--train-csv", str(train_csv),
+        "--test-csv", str(test_csv),
+        "--out", str(out),
+        "--reports", str(reports),
+        "--val-frac", "0.5",
+    ])
+    rc = main()
+    records = [
+        json.loads(line)
+        for line in (out / "units.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    report = json.loads((reports / "preprocess_report.json").read_text())
+    return rc, records, report
 
 
 def test_main_succeeds_and_writes_outputs(tmp_path, monkeypatch):
@@ -111,3 +150,17 @@ def test_report_label_frequencies_cover_known_rooms(tmp_path, monkeypatch):
     _, _, report = _run(tmp_path, monkeypatch)
     freqs = report["label_frequencies"]
     assert {"Bedroom", "Structure", "Kitchen", "Bathroom"} <= set(freqs)
+
+
+def test_official_train_test_mode_preserves_ids_and_test_split(tmp_path, monkeypatch):
+    rc, records, report = _run_official(tmp_path, monkeypatch)
+
+    assert rc == 0
+    by_unit = {record["unit_id"]: record for record in records}
+    assert by_unit[201]["split"] == "test"
+    assert by_unit[201]["official_split"] == "test"
+    assert by_unit[201]["plan_id"] == 2001
+    assert by_unit[201]["floor_id"] == 9901
+    assert {by_unit[101]["split"], by_unit[102]["split"]} == {"train", "val"}
+    assert report["split_counts"]["test"] == 1
+    assert report["official_split_counts"] == {"train": 2, "test": 1}

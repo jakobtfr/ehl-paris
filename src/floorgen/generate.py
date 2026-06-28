@@ -11,7 +11,9 @@ submission must point ``GENERATOR`` at the trained diffusion/flow model.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
+from pathlib import Path
 
 import numpy as np
 from shapely.geometry import MultiPolygon, Polygon
@@ -23,9 +25,54 @@ from .data.outline import largest_shell
 from .repr.mrr import RepairRejected, repair_partition
 from .seeding import seed_everything
 
-# A generator backend maps (outline, rng) -> list[RoomMRR]. The model trainer
-# registers the trained sampler here; until then we use the baseline.
+
+def _generator_from_env() -> Callable[[BaseGeometry, np.random.Generator], list] | None:
+    checkpoint = os.environ.get("FLOORGEN_CHECKPOINT")
+    if not checkpoint:
+        return None
+
+    steps = int(os.environ.get("FLOORGEN_SAMPLE_STEPS", "32"))
+    threshold = float(os.environ.get("FLOORGEN_PRESENCE_THRESHOLD", "0.5"))
+    if steps <= 0:
+        raise ValueError("FLOORGEN_SAMPLE_STEPS must be positive")
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError("FLOORGEN_PRESENCE_THRESHOLD must be between 0 and 1")
+    device = os.environ.get("FLOORGEN_DEVICE", "cpu")
+
+    from .model.sampler import load_generator
+
+    return load_generator(Path(checkpoint), device=device, steps=steps, threshold=threshold)
+
+
+# A generator backend maps (outline, rng) -> list[RoomMRR]. By default this is
+# the baseline. If FLOORGEN_CHECKPOINT is set and GENERATOR has not been
+# explicitly replaced, the checkpoint-backed generator is loaded lazily on first
+# generation so CLIs with explicit --checkpoint flags can parse their arguments
+# without being preempted by stale environment state.
 GENERATOR: Callable[[BaseGeometry, np.random.Generator], list] = baseline_sample
+_ENV_GENERATOR_KEY: tuple[str, str, str, str] | None = None
+_ENV_GENERATOR: Callable[[BaseGeometry, np.random.Generator], list] | None = None
+
+
+def _active_generator() -> Callable[[BaseGeometry, np.random.Generator], list]:
+    global _ENV_GENERATOR
+    global _ENV_GENERATOR_KEY
+
+    if GENERATOR is not baseline_sample:
+        return GENERATOR
+    checkpoint = os.environ.get("FLOORGEN_CHECKPOINT")
+    if not checkpoint:
+        return GENERATOR
+    key = (
+        checkpoint,
+        os.environ.get("FLOORGEN_DEVICE", "cpu"),
+        os.environ.get("FLOORGEN_SAMPLE_STEPS", "32"),
+        os.environ.get("FLOORGEN_PRESENCE_THRESHOLD", "0.5"),
+    )
+    if _ENV_GENERATOR is None or key != _ENV_GENERATOR_KEY:
+        _ENV_GENERATOR = _generator_from_env()
+        _ENV_GENERATOR_KEY = key
+    return _ENV_GENERATOR or GENERATOR
 
 
 def _as_records(partition: list[tuple[Polygon, int]]) -> list[dict]:
@@ -64,7 +111,7 @@ def sample_layouts(
         partition = []
         last_error: RepairRejected | None = None
         for _attempt in range(8):
-            mrrs = GENERATOR(outline, rng)
+            mrrs = _active_generator()(outline, rng)
             try:
                 partition = repair_partition(mrrs, outline)
                 break

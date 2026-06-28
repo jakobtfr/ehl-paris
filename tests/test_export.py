@@ -7,6 +7,9 @@ WKT validity, metadata sidecar, and determinism.
 from __future__ import annotations
 
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -51,7 +54,9 @@ class TestExportLayouts:
 
     def test_required_columns(self, demo_outlines, export_cfg):
         df = export_layouts(demo_outlines, export_cfg)
-        required = {"unit_id", "sample_idx", "seed", "label", "label_idx", "wkt", "area_m2"}
+        required = {
+            "unit_id", "sample_idx", "seed", "label", "label_idx", "geom", "wkt", "area_m2",
+        }
         assert required.issubset(set(df.columns))
 
     def test_wkt_valid(self, demo_outlines, export_cfg):
@@ -65,6 +70,25 @@ class TestExportLayouts:
         df = export_layouts(demo_outlines, export_cfg)
         exported_ids = set(df["unit_id"].unique())
         assert exported_ids.issubset(set(demo_outlines.keys()))
+
+    def test_processed_metadata_preserved(self, export_cfg):
+        outlines = {
+            "201": {
+                "geometry": box(0, 0, 8, 8),
+                "unit_id": 201,
+                "plan_id": 2001,
+                "floor_id": 9901,
+                "split": "test",
+                "official_split": "test",
+            }
+        }
+        df = export_layouts(outlines, export_cfg)
+        assert set(df["unit_id"]) == {"201"}
+        assert set(df["plan_id"]) == {2001}
+        assert set(df["floor_id"]) == {9901}
+        assert set(df["split"]) == {"test"}
+        assert set(df["official_split"]) == {"test"}
+        assert df["geom"].equals(df["wkt"])
 
     def test_sample_indices(self, demo_outlines, export_cfg):
         df = export_layouts(demo_outlines, export_cfg)
@@ -126,3 +150,29 @@ class TestExportCSV:
         df = pd.read_csv(path)
         assert "wkt" in df.columns
         assert len(df) > 0
+
+    def test_export_batch_fails_on_invalid_checkpoint_env(self, tmp_path):
+        env = {
+            **os.environ,
+            "FLOORGEN_CHECKPOINT": str(tmp_path / "missing.pt"),
+            "FLOORGEN_PRESENCE_THRESHOLD": "2.0",
+        }
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "scripts/export_batch.py",
+                "--demo",
+                "--format",
+                "csv",
+                "--output-dir",
+                str(tmp_path / "export"),
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode != 0
+        assert "FLOORGEN_PRESENCE_THRESHOLD must be between 0 and 1" in result.stderr

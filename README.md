@@ -71,6 +71,7 @@ src/floorgen/
   generate.py          generate(outline) entry + sample_layouts()
   baseline.py          heuristic sampler — fallback ONLY, never scored
   export.py            batch export utilities
+  posttrain.py         checkpoint registration, scoring, export, provenance
   data/
     outline.py         outline construction (buffer 0.3 / union / -0.3)
     normalize.py       256/max-delta model-space norm + scale conditioning
@@ -96,6 +97,7 @@ src/floorgen/
     presets.json       real MSD apartment outlines for the demo
 scripts/
   train_flow.py        train/smoke-test the conditional flow model
+  post_train.py        checkpoint → score → export → report pipeline
   smoke_test.py        standalone pipeline smoke test (no deps beyond core)
   evaluate.py          full evaluation CLI (generate → validate → render → metrics)
   export_batch.py      batch export generated layouts to Parquet/CSV
@@ -136,15 +138,31 @@ See [`.env.example`](.env.example) for all variables.
 
 | Variable | Purpose | Required? |
 |---|---|---|
-| `MSD_CSV_PATH` | Path to the Modified Swiss Dwellings CSV | For preprocessing only |
+| `MSD_CSV_PATH` | Path to one Modified Swiss Dwellings CSV; dev fallback when official split files are not passed | For single-CSV preprocessing only |
+| `MSD_TRAIN_CSV_PATH` | Path to Kaggle's predefined train split CSV | For official-split preprocessing |
+| `MSD_TEST_CSV_PATH` | Path to Kaggle's predefined test split CSV | For official-split preprocessing |
+| `MSD_KAGGLE_DIR` | Directory containing one train CSV and one test CSV; auto-detected by filename | Alternative to explicit split paths |
 | `FLOORGEN_PROCESSED` | Output dir for preprocessed data (default: `data/processed`) | No |
 | `FLOORGEN_REPORTS` | Output dir for preprocessing reports (default: `reports`) | No |
+| `FLOORGEN_CHECKPOINT` | Optional checkpoint path auto-loaded by `floorgen.generate` | For trained generation |
+| `FLOORGEN_DEVICE` | Torch device for checkpoint generation (`cpu`, `cuda`) | No |
+| `FLOORGEN_SAMPLE_STEPS` | Euler steps for checkpoint sampler | No |
+| `FLOORGEN_PRESENCE_THRESHOLD` | Room-presence threshold for checkpoint sampler | No |
 
 ### Run
 
 ```bash
-# 1. Preprocess the MSD dataset (requires MSD_CSV_PATH)
-uv run python -m floorgen.data.preprocess --out data/processed --reports reports
+# 1. Preprocess the official Kaggle train/test split.
+#    Official test stays split=test; official train is split into train/val.
+uv run python -m floorgen.data.preprocess \
+  --train-csv "$MSD_TRAIN_CSV_PATH" \
+  --test-csv "$MSD_TEST_CSV_PATH" \
+  --out data/processed --reports reports
+
+# Development fallback for a single CSV: creates a local train/val split only.
+uv run python -m floorgen.data.preprocess \
+  --csv "$MSD_CSV_PATH" \
+  --out data/processed-dev --reports reports-dev
 
 # 2. Oracle gate — verify MRR representation fidelity
 uv run python -m floorgen.repr.oracle_gate --units data/processed/units.jsonl
@@ -158,14 +176,25 @@ uv run --extra train python scripts/train_flow.py \
 # 4. Generate rooms for an outline (baseline smoke test unless checkpoint registered)
 uv run python -B -c "from shapely.geometry import box; from floorgen.generate import generate; print(len(generate(box(0,0,10,8))), 'rooms')"
 
-# 5. Tests + lint
-uv run --extra dev pytest -q
+# 5. Post-training checkpoint evaluation/export
+uv run --extra train python scripts/post_train.py \
+  --checkpoint checkpoints/flow-smoke.pt \
+  --units data/processed/units.jsonl \
+  --output-dir reports/post_train \
+  --split test --n-samples 4 --steps 32 --threshold 0.5
+
+# 6. Use a trained checkpoint through generate()
+FLOORGEN_CHECKPOINT=checkpoints/flow-smoke.pt \
+uv run --extra train python -B -c "from shapely.geometry import box; from floorgen.generate import generate; print(len(generate(box(0,0,10,8))), 'rooms')"
+
+# 7. Tests + lint. Include --extra train to exercise model/post-training tests.
+uv run --extra dev --extra train pytest -q
 uv run --extra dev ruff check src tests
 
-# 6. Quick smoke test (no external data or gradio needed)
+# 8. Quick smoke test (no external data or gradio needed)
 uv run python scripts/smoke_test.py
 
-# 7. Launch Gradio demo (requires: pip install gradio)
+# 9. Launch Gradio demo (requires: pip install gradio)
 uv run python app.py
 ```
 
@@ -225,6 +254,13 @@ floorgen.generate.GENERATOR = load_generator(
 The repair layer, evaluator, contract tests, demo, and `generate(outline)`
 signature all remain unchanged. Document the generation seed, candidate count,
 ranking method, checkpoint, and config hash for submitted outputs.
+
+For the full post-training handoff, run `scripts/post_train.py`. It loads the
+checkpoint, scores validation outlines, exports generated layouts, and writes:
+
+- `reports/post_train/post_train_report.json`
+- `reports/post_train/post_train_summary.md`
+- `reports/post_train/layouts/layouts_*.parquet` or `.csv`
 
 ---
 

@@ -1,9 +1,15 @@
 """MSD preprocessing pipeline.
 
 Turns the raw geometry CSV into model-ready per-apartment records plus a
-leakage-safe train/val split and a human-readable report.
+human-readable report.
 
-One ``unit_id`` == one apartment == one training example. We group the split by
+For official submission runs, pass Kaggle's predefined train/test CSV files.
+The official test rows remain ``split == "test"`` and only the official train
+rows are divided into local train/val. ``unit_id``, ``plan_id``, and
+``floor_id`` are copied through unchanged so generated outputs can be matched
+back to the challenge split.
+
+For local development, a single CSV can still be split into train/val by
 ``plan_id``/``floor_id`` so apartments from the same physical floor never
 straddle the train/val boundary.
 
@@ -79,6 +85,24 @@ def _load(csv_path: Path) -> tuple[Any, int]:
     return parse_area_geometries(df)
 
 
+def _find_split_csv(kaggle_dir: Path, split: str) -> Path:
+    """Find one CSV whose filename names the requested Kaggle split."""
+    def names_split(path: Path) -> bool:
+        tokens = path.stem.lower().replace("-", "_").split("_")
+        return any(token == split.lower() or token.startswith(split.lower()) for token in tokens)
+
+    matches = [
+        p for p in kaggle_dir.rglob("*.csv")
+        if names_split(p)
+    ]
+    if not matches:
+        raise FileNotFoundError(f"no {split!r} CSV found under {kaggle_dir}")
+    if len(matches) > 1:
+        formatted = ", ".join(str(p) for p in sorted(matches))
+        raise ValueError(f"multiple {split!r} CSV candidates under {kaggle_dir}: {formatted}")
+    return matches[0]
+
+
 def build_records(gdf: Any, limit_units: int = 0) -> tuple[list[dict], int, Counter]:
     """One record per unit_id: outline, rooms, transform, scale features, meta.
 
@@ -138,6 +162,22 @@ def build_records(gdf: Any, limit_units: int = 0) -> tuple[list[dict], int, Coun
     return records, skipped, unmapped
 
 
+def build_records_from_csv(
+    csv_path: Path,
+    *,
+    official_split: str | None = None,
+    limit_units: int = 0,
+) -> tuple[list[dict], int, Counter, int, int]:
+    """Load one MSD CSV and return processed records plus audit counts."""
+    gdf, n_invalid_geom = _load(csv_path)
+    n_area_rows_no_unit = int(gdf["unit_id"].isna().sum())
+    records, skipped, unmapped = build_records(gdf, limit_units=limit_units)
+    if official_split is not None:
+        for record in records:
+            record["official_split"] = official_split
+    return records, skipped, unmapped, n_invalid_geom, n_area_rows_no_unit
+
+
 def split_by_plan(records: list[dict], val_frac: float = 0.15, seed: int = SEED) -> dict[int, str]:
     """Assign each unit to train/val, grouping by plan_id (no floor leakage)."""
     import numpy as np
@@ -148,6 +188,42 @@ def split_by_plan(records: list[dict], val_frac: float = 0.15, seed: int = SEED)
     n_val = max(1, int(len(plan_ids) * val_frac))
     val_plans = set(plan_ids[:n_val])
     return {r["unit_id"]: ("val" if r["plan_id"] in val_plans else "train") for r in records}
+
+
+def split_predefined_train_test(
+    records: list[dict],
+    val_frac: float = 0.15,
+    seed: int = SEED,
+) -> dict[int, str]:
+    """Respect Kaggle's train/test split and derive val only from train rows."""
+    seen: dict[int, str] = {}
+    train_records: list[dict] = []
+    split: dict[int, str] = {}
+
+    for record in records:
+        unit_id = int(record["unit_id"])
+        source = str(record.get("official_split", "")).lower()
+        if source not in {"train", "test"}:
+            raise ValueError(
+                f"record unit_id={unit_id} has unsupported official_split={source!r}"
+            )
+        previous = seen.get(unit_id)
+        if previous is not None and previous != source:
+            raise ValueError(
+                f"unit_id={unit_id} appears in both official {previous!r} and {source!r}"
+            )
+        seen[unit_id] = source
+
+        if source == "test":
+            split[unit_id] = "test"
+        else:
+            train_records.append(record)
+
+    if not train_records:
+        raise ValueError("official train split produced no usable records")
+
+    split.update(split_by_plan(train_records, val_frac=val_frac, seed=seed))
+    return split
 
 
 def room_count_distribution(records: list[dict]) -> dict[str, Any]:
@@ -182,18 +258,19 @@ def split_summary(records: list[dict], split: dict[int, str]) -> dict[str, Any]:
     merely assumed.
     """
     unit_counts: Counter = Counter(split[r["unit_id"]] for r in records)
-    plan_to_split: dict[int, str] = {}
-    leaked: set[int] = set()
+    plan_to_splits: dict[int, set[str]] = {}
     for r in records:
         plan_id, s = r["plan_id"], split[r["unit_id"]]
-        if plan_id in plan_to_split and plan_to_split[plan_id] != s:
-            leaked.add(plan_id)
-        plan_to_split[plan_id] = s
-    plan_counts: Counter = Counter(plan_to_split.values())
+        plan_to_splits.setdefault(plan_id, set()).add(s)
+    leaked = {plan_id for plan_id, splits in plan_to_splits.items() if len(splits) > 1}
+    plan_counts: Counter = Counter(
+        next(iter(splits)) if len(splits) == 1 else "mixed"
+        for splits in plan_to_splits.values()
+    )
     return {
         "unit_counts": dict(unit_counts),
         "plan_counts": dict(plan_counts),
-        "n_plans": len(plan_to_split),
+        "n_plans": len(plan_to_splits),
         "plan_leakage": sorted(leaked),
     }
 
@@ -245,6 +322,9 @@ def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
         "n_plans": int(manifest["plan_id"].nunique()),
         "n_floors": int(manifest["floor_id"].nunique()),
         "split_counts": manifest["split"].value_counts().to_dict(),
+        "official_split_counts": dict(
+            Counter(str(r.get("official_split", "derived")) for r in records)
+        ),
         "split_summary": split_summary(records, split),
         "room_count_distribution": room_count_distribution(records),
         "rooms_per_unit": {
@@ -269,6 +349,24 @@ def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Preprocess MSD into model-ready unit records.")
     p.add_argument("--csv", type=Path, default=PATHS.msd_csv)
+    p.add_argument(
+        "--train-csv",
+        type=Path,
+        default=PATHS.msd_train_csv,
+        help="Official Kaggle train split CSV.",
+    )
+    p.add_argument(
+        "--test-csv",
+        type=Path,
+        default=PATHS.msd_test_csv,
+        help="Official Kaggle test split CSV.",
+    )
+    p.add_argument(
+        "--kaggle-dir",
+        type=Path,
+        default=PATHS.msd_kaggle_dir,
+        help="Directory containing one train CSV and one test CSV; used if split paths are omitted.",
+    )
     p.add_argument("--out", type=Path, default=PATHS.processed_dir)
     p.add_argument("--reports", type=Path, default=PATHS.reports_dir)
     p.add_argument("--limit-units", type=int, default=0, help="0 = all units.")
@@ -279,13 +377,39 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     seed_everything(SEED)
-    gdf, n_invalid_geom = _load(args.csv)
-    n_area_rows_no_unit = int(gdf["unit_id"].isna().sum())
-    records, skipped, unmapped = build_records(gdf, limit_units=args.limit_units)
+    train_csv = args.train_csv
+    test_csv = args.test_csv
+    if args.kaggle_dir:
+        train_csv = train_csv or _find_split_csv(args.kaggle_dir, "train")
+        test_csv = test_csv or _find_split_csv(args.kaggle_dir, "test")
+
+    if bool(train_csv) != bool(test_csv):
+        raise ValueError("pass both --train-csv and --test-csv, or neither")
+
+    if train_csv and test_csv:
+        train_records, train_skipped, train_unmapped, train_invalid, train_no_unit = (
+            build_records_from_csv(train_csv, official_split="train",
+                                   limit_units=args.limit_units)
+        )
+        test_records, test_skipped, test_unmapped, test_invalid, test_no_unit = (
+            build_records_from_csv(test_csv, official_split="test",
+                                   limit_units=args.limit_units)
+        )
+        records = train_records + test_records
+        skipped = train_skipped + test_skipped
+        unmapped = train_unmapped + test_unmapped
+        n_invalid_geom = train_invalid + test_invalid
+        n_area_rows_no_unit = train_no_unit + test_no_unit
+        split = split_predefined_train_test(records, val_frac=args.val_frac, seed=SEED)
+    else:
+        records, skipped, unmapped, n_invalid_geom, n_area_rows_no_unit = (
+            build_records_from_csv(args.csv, limit_units=args.limit_units)
+        )
+        split = split_by_plan(records, val_frac=args.val_frac, seed=SEED)
+
     if not records:
         print("error: no usable units produced.")
         return 1
-    split = split_by_plan(records, val_frac=args.val_frac, seed=SEED)
     write_outputs(records, split, args.out, args.reports, skipped, unmapped,
                   n_invalid_geom=n_invalid_geom,
                   n_area_rows_no_unit=n_area_rows_no_unit)
