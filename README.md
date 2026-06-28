@@ -5,7 +5,7 @@
 Given only an apartment **outline polygon**, generate a complete, plausible set
 of typed interior **room polygons** (vector, never a pixel grid) using a
 diffusion / flow-matching model. Scored on **FID**, **density**, and
-**coverage** against real Swiss residential floor plans (Modified Swiss
+**coverage** against real world Swiss residential floor plans (Modified Swiss
 Dwellings).
 
 ---
@@ -252,7 +252,7 @@ ranking method, checkpoint, and config hash for submitted outputs.
 
 This repository uses Entire for full session history. The checkpoint branch
 `entire/checkpoints/v1` captures the working-session record as required by the
-hackathon rules. This is advisory and does not count toward placement.
+hackathon rules. This is advisory and does not count toward placement. 
 
 ---
 
