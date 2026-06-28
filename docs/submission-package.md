@@ -132,11 +132,12 @@ uv run --extra train python scripts/export_batch.py \
 ## Suggested Demo Script
 
 1. Open the Gradio app with `uv run --with gradio --extra train python app.py`.
-2. Show the backend provenance line. Locally this should show the AMD
-   Transformer checkpoint; if not, the checkpoint artifact is missing from that
-   environment.
-3. Generate three samples for a preset outline and point to the unchanged
+2. Pick either AMD Transformer or trained MLP from the Model dropdown. Both run
+   local checkpoint inference through the same device resolver.
+3. Show the backend provenance line. Locally this should show the selected
+   checkpoint and `mps` device when available.
+4. Generate three samples for a preset outline and point to the unchanged
    boundary, labels, and GeoJSON vector output.
-4. Show the checkpoint path, sampler steps, threshold, ranked mode, and
+5. Show the checkpoint path, sampler steps, threshold, ranked mode, and
    candidate budget in the UI.
-5. Show the exported `geom` WKT schema and evaluation report commands.
+6. Show the exported `geom` WKT schema and evaluation report commands.

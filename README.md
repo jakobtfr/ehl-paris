@@ -246,18 +246,21 @@ uv run --with gradio --extra train python app.py
 1. **Launch** the Gradio app: `uv run --with gradio --extra train python app.py`.
    The local default is the AMD Transformer checkpoint at
    `checkpoints/flow-transformer-amd-862d422.pt` in ranked mode.
-2. **Select** a preset outline (real MSD apartments of varying size) or paste custom WKT.
-3. **Choose** same-outline diversity, near-twin input sensitivity, raw-vs-ranked
+2. **Select** the model: AMD Transformer or trained legacy MLP. Both run
+   inference locally on this computer through `FLOORGEN_DEVICE=auto` (`mps` on
+   this Mac).
+3. **Select** a preset outline (real MSD apartments of varying size) or paste custom WKT.
+4. **Choose** same-outline diversity, near-twin input sensitivity, raw-vs-ranked
    comparison, or single-sample inspection.
-4. **Choose** raw samples or ranked/post-processed mode. Ranked mode passes the
+5. **Choose** raw samples or ranked/post-processed mode. Ranked mode passes the
    candidate budget into `sample_layouts(..., mode="ranked")` and records
    `floorgen.generate.LAST_RANKING_PROVENANCE`.
-5. **Generate** 1-6 samples with a fixed seed; the app renders the vector room
+6. **Generate** 1-6 samples with a fixed seed; the app renders the vector room
    polygons and never uses a demo-only generation path.
-6. **Read** the judge summary strip, which maps live evidence to FID realism,
+7. **Read** the judge summary strip, which maps live evidence to FID realism,
    density, coverage, vector-output, audit trail, checkpoint, device, steps,
    threshold, candidate budget, and local report status.
-7. **Inspect** Validity, Ranking Provenance, Vector Export, Run Provenance,
+8. **Inspect** Validity, Ranking Provenance, Vector Export, Run Provenance,
    Model, Metrics, Pitch Flow, and Limitations tabs. Vector export includes
    GeoJSON plus WKT/CSV rows and downloadable GeoJSON/CSV/provenance files.
 
