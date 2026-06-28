@@ -11,7 +11,6 @@ import argparse
 import hashlib
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PARTS_DIR = ROOT / "checkpoints" / "flow-transformer-amd-862d422.pt.parts"
 DEFAULT_OUTPUT = ROOT / "checkpoints" / "flow-transformer-amd-862d422.pt"

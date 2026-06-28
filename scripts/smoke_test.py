@@ -1,6 +1,8 @@
 """Smoke test: verify the complete generation pipeline works end-to-end.
 
-Run without any external data, GPU, or gradio dependency. Exercises:
+Run without external data, GPU, or gradio. In this submission workspace it uses
+the default AMD checkpoint, so install/run with the training extra for torch.
+Exercises:
   - generate() contract (outline → room records)
   - sample_layouts() with multiple samples
   - validity metrics (geometry health check)
@@ -8,7 +10,7 @@ Run without any external data, GPU, or gradio dependency. Exercises:
   - export pipeline (room records → GeoJSON)
 
 Usage:
-    python scripts/smoke_test.py
+    uv run --extra train python scripts/smoke_test.py
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ from shapely.geometry import Polygon, box
 
 from floorgen.config import ROOM_NAMES, SEED
 from floorgen.eval.metrics import validity_metrics
-from floorgen.generate import generate, sample_layouts
+from floorgen.generate import backend_provenance, generate, sample_layouts
 
 
 def main() -> int:
@@ -93,7 +95,7 @@ def main() -> int:
     # Summary
     print("\n" + "=" * 60)
     print("ALL SMOKE TESTS PASSED")
-    print("  Backend: baseline heuristic (GENERATOR seam)")
+    print(f"  Backend: {backend_provenance()}")
     print(f"  Seed: {SEED}")
     print(f"  Room types: {', '.join(ROOM_NAMES)}")
     print("=" * 60)

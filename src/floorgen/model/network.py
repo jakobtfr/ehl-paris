@@ -185,7 +185,11 @@ class RoomFlowTransformer(nn.Module):
             dim_feedforward=dim_feedforward, dropout=dropout,
             batch_first=True,
         )
-        self.outline_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.outline_encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=num_layers,
+            enable_nested_tensor=False,
+        )
         self.outline_norm = nn.LayerNorm(d_model)
 
         self.time_mlp = nn.Sequential(

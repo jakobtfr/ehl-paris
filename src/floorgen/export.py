@@ -24,7 +24,7 @@ from shapely.geometry.base import BaseGeometry
 
 from .config import PATHS, ROOM_NAMES, SEED
 from .eval.metrics import validity_metrics
-from .generate import sample_layouts
+from .generate import DEFAULT_CANDIDATE_BUDGET, DEFAULT_GENERATION_MODE, sample_layouts
 
 OutlineInput = BaseGeometry | dict[str, Any]
 
@@ -36,9 +36,9 @@ class ExportConfig:
     output_dir: Path = field(default_factory=lambda: PATHS.reports_dir / "export")
     n_samples: int = 4
     seed: int = SEED
-    checkpoint: str = "baseline"
-    mode: str = "raw"
-    candidate_budget: int | None = None
+    checkpoint: str = "auto"
+    mode: str = DEFAULT_GENERATION_MODE
+    candidate_budget: int | None = int(DEFAULT_CANDIDATE_BUDGET)
     config_notes: str = ""
     include_validity: bool = True
     fail_on_error: bool = True

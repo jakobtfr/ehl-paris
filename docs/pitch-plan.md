@@ -173,15 +173,16 @@ weights and exports.
 | --- | --- |
 | Contract, repair, demo, tests, evaluator, export | Implemented |
 | Flow training path and checkpoint loader | Implemented |
-| Default generator | Baseline fallback unless `FLOORGEN_CHECKPOINT` is set |
+| Default generator | AMD Transformer checkpoint in ranked mode when the local checkpoint artifact exists |
 | Real MSD-trained checkpoint | AMD Transformer checkpoint available at `checkpoints/flow-transformer-amd-862d422.pt` |
 | Ranked post-processing | Implemented as documented test-time compute; not raw model quality |
 | FID/density/coverage report | 3-unit official test smoke exists at `reports/final_test_metrics_smoke.json` |
 | Real processed data and test-split output export | Official split processed locally; 3-unit test export smoke exists, full export still pending |
 
-This is important to say plainly: the baseline is useful for testing the full
-pipeline, while the judged model demo should use the trained flow checkpoint and
-clearly distinguish raw sampler output from ranked/post-processed output.
+This is important to say plainly: the baseline is useful only as a
+missing-artifact/debug fallback, while the judged model demo uses the trained
+AMD flow checkpoint and clearly distinguishes raw sampler output from
+ranked/post-processed output.
 
 ## Quantitative Outcomes to Lead With
 
@@ -197,7 +198,7 @@ Use these only if they are current at presentation time:
 | Lint | Ruff passed |
 | Official test metric smoke | FID 257.3317565917969, density 0.0, coverage 0.0 on 3 official test units |
 | Ranked geometry health smoke | 0.0000 outside / overlap / invalid, 0.0037 gap, 0 failures on 3 official test units |
-| Test-time compute | AMD checkpoint, ranked mode, candidate budget 4, seed 42 for current smoke |
+| Test-time compute | AMD checkpoint, ranked mode, candidate budget 16, seed 42 for current smoke |
 
 ## Demo Script
 
@@ -241,5 +242,5 @@ for complex real floor plans than full arbitrary polygons.
 ## Source Notes
 
 - MSD paper: https://arxiv.org/abs/2407.10121
-- Local verification run: `uv run python scripts/smoke_test.py`,
+- Local verification run: `uv run --extra train python scripts/smoke_test.py`,
   `uv run pytest -q`, and `uv run ruff check src tests scripts`

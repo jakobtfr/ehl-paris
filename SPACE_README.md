@@ -21,16 +21,21 @@ model/checkpoint status, metric/report status, and a judge summary mapping the
 live evidence to FID realism, density, coverage, vector-output, and audit-trail
 criteria.
 
-**Backend status:** the UI explicitly labels baseline fallback, flow checkpoint
-sampler, custom generator, missing checkpoint, and checkpoint-load errors. For
-the checkpoint-backed demo, set `FLOORGEN_CHECKPOINT`,
+**Backend status:** the UI defaults to the AMD Transformer checkpoint at
+`checkpoints/flow-transformer-amd-862d422.pt` and labels flow checkpoint
+sampler, baseline fallback, custom generator, missing checkpoint, and
+checkpoint-load errors explicitly. For a Space deployment, upload or mount the
+checkpoint artifact at that path, or set `FLOORGEN_CHECKPOINT`,
 `FLOORGEN_DEVICE`, `FLOORGEN_SAMPLE_STEPS`,
 `FLOORGEN_PRESENCE_THRESHOLD`, `FLOORGEN_GENERATION_MODE`, and
 `FLOORGEN_CANDIDATE_BUDGET` as Space secrets or runtime environment variables.
-Set `FLOORGEN_GENERATION_MODE=ranked` for the checkpoint-backed judge path.
-Space requirements include torch dependencies for checkpoint inference; without
-a checkpoint path the app runs the baseline fallback. GeoJSON, CSV, and
-provenance downloads record the backend metadata for the displayed sample.
+Use `FLOORGEN_MODEL=mlp` or `FLOORGEN_CHECKPOINT=mlp` to run the trained legacy
+MLP checkpoint instead of the AMD Transformer when that artifact is present.
+Set `FLOORGEN_GENERATION_MODE=ranked` for the judge path. Space requirements
+include torch dependencies for checkpoint inference; without the checkpoint
+artifact, the app can only show the missing-checkpoint/fallback state. GeoJSON,
+CSV, and provenance downloads record the backend metadata for the displayed
+sample.
 
 **Deploy:** create a Gradio Space, push this repo. Spaces reads this file's
 front-matter; rename it to `README.md` in the Space (the repo's own README is

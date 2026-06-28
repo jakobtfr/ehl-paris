@@ -71,6 +71,10 @@ Use **the legacy MLP checkpoints only as baselines/ablation history**. They show
 the pipeline existed before the Transformer upgrade, but they are not the model
 we would pitch as the final challenge approach.
 
+Both trained families can run locally on the Mac. Use `FLOORGEN_MODEL=mlp` (or
+`FLOORGEN_CHECKPOINT=mlp`) to run `checkpoints/flow-full-8303584.pt` through the
+same `FLOORGEN_DEVICE=auto` resolver, which prefers MPS on this machine.
+
 ## Architecture Summary
 
 The current trainable model is `RoomFlowModel`, backed by
@@ -137,8 +141,8 @@ Representative CPU command:
 uv run --extra train python scripts/evaluate.py \
   --demo \
   --checkpoint checkpoints/flow-transformer-amd-862d422.pt \
-  --device cpu --steps 32 --threshold 0.5 \
-  --mode ranked --candidate-budget 8 --n-samples 2
+  --threshold 0.5 \
+  --mode ranked --n-samples 2
 ```
 
 Additional representative check on rectangle `12x8`, L-shape, and two real
@@ -161,16 +165,17 @@ Verified one-argument ranked checkpoint probe:
 
 ```bash
 FLOORGEN_CHECKPOINT=checkpoints/flow-transformer-amd-862d422.pt \
-FLOORGEN_DEVICE=cpu \
-FLOORGEN_SAMPLE_STEPS=4 \
+FLOORGEN_DEVICE=auto \
+FLOORGEN_SAMPLE_STEPS=16 \
 FLOORGEN_PRESENCE_THRESHOLD=0.5 \
 FLOORGEN_GENERATION_MODE=ranked \
-FLOORGEN_CANDIDATE_BUDGET=4 \
+FLOORGEN_CANDIDATE_BUDGET=16 \
 uv run --extra train python -B -c "from shapely.geometry import box; import floorgen.generate as g; layout = g.generate(box(0,0,10,8)); print(len(layout), sorted({r['label'] for r in layout}), g.LAST_RANKING_PROVENANCE.get('semantic_repair_count'))"
 ```
 
-Observed output: 7 rooms, labels `Bathroom`, `Bedroom`, `Corridor`, `Kitchen`,
-`Livingroom`, and `semantic_repair_count=4`.
+Observed local-MPS output with the current defaults: 10 rooms, labels
+`Balcony`, `Bathroom`, `Bedroom`, `Corridor`, `Kitchen`, `Livingroom`,
+`Structure`, and `semantic_repair_count=16`.
 
 ## Judge FAQ
 
@@ -208,8 +213,8 @@ from floorgen.model.sampler import load_generator
 
 generate_mrrs = load_generator(
     "checkpoints/flow-transformer-amd-862d422.pt",
-    steps=32,
-    device="cpu",
+    steps=16,
+    device="mps",
 )
 ```
 
@@ -217,12 +222,21 @@ For demo use, point the app at a checkpoint:
 
 ```bash
 FLOORGEN_CHECKPOINT=checkpoints/flow-transformer-amd-862d422.pt \
-FLOORGEN_DEVICE=cpu \
-FLOORGEN_SAMPLE_STEPS=32 \
+FLOORGEN_DEVICE=auto \
+FLOORGEN_SAMPLE_STEPS=16 \
 FLOORGEN_PRESENCE_THRESHOLD=0.5 \
+FLOORGEN_GENERATION_MODE=ranked \
 FLOORGEN_CANDIDATE_BUDGET=16 \
 uv run --with gradio --extra train python app.py
 ```
 
-Use `FLOORGEN_DEVICE=mps` on the Mac or `FLOORGEN_DEVICE=cuda` on the ROCm/CUDA
-machine if the runtime supports it.
+The default `FLOORGEN_DEVICE=auto` prefers `mps` on the Mac, then `cuda`, then
+`cpu`.
+
+To run the trained MLP checkpoint locally on the Mac GPU:
+
+```bash
+FLOORGEN_MODEL=mlp \
+FLOORGEN_DEVICE=auto \
+uv run --extra train python -B -c "from shapely.geometry import box; import floorgen.generate as g; layout = g.generate(box(0,0,10,8)); print(g.backend_provenance()); print(len(layout), sorted({r['label'] for r in layout}))"
+```

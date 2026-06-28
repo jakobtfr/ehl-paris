@@ -18,7 +18,7 @@ uv run python scripts/evaluate.py --demo --n-samples 4
 # Run with trained model checkpoint
 FLOORGEN_CHECKPOINT=checkpoints/flow-transformer-amd-862d422.pt \
 FLOORGEN_GENERATION_MODE=ranked \
-FLOORGEN_CANDIDATE_BUDGET=4 \
+FLOORGEN_CANDIDATE_BUDGET=16 \
 uv run --extra train python scripts/evaluate.py --demo --n-samples 1 --mode ranked
 
 # Compute real-vs-generated FID/PRDC when processed units are available.
@@ -28,8 +28,8 @@ uv run --extra train python scripts/evaluate.py \
   --split test \
   --limit 3 \
   --checkpoint checkpoints/flow-transformer-amd-862d422.pt \
-  --device cpu --steps 4 --threshold 0.5 \
-  --mode ranked --candidate-budget 4 \
+  --threshold 0.5 \
+  --mode ranked \
   --real-metrics \
   --n-samples 1 \
   --output reports/final_test_metrics_smoke.json
@@ -43,8 +43,8 @@ uv run --extra train python scripts/export_batch.py \
   --split test \
   --limit 3 \
   --checkpoint checkpoints/flow-transformer-amd-862d422.pt \
-  --device cpu --steps 4 --threshold 0.5 \
-  --mode ranked --candidate-budget 4 \
+  --threshold 0.5 \
+  --mode ranked \
   --format csv \
   --output-dir outputs/final_test_export
 ```

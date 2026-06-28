@@ -7,7 +7,13 @@ from shapely.ops import unary_union
 
 from floorgen.baseline import baseline_sample
 from floorgen.config import ROOM_NAME_TO_IDX, ROOM_NAMES
-from floorgen.generate import backend_provenance, generate, sample_layouts
+from floorgen.generate import (
+    DEFAULT_CHECKPOINT_PATH,
+    MLP_CHECKPOINT_PATH,
+    backend_provenance,
+    generate,
+    sample_layouts,
+)
 from floorgen.repr.mrr import RepairRejected
 
 OUTLINE = Polygon([(0, 0), (10, 0), (10, 6), (6, 6), (6, 10), (0, 10)])
@@ -129,6 +135,37 @@ def test_backend_provenance_reports_checkpoint_env(monkeypatch):
     assert provenance["steps"] == "64"
     assert provenance["generation_mode"] == "ranked"
     assert provenance["candidate_budget"] == "4"
+
+
+def test_backend_provenance_prefers_local_amd_checkpoint_by_default(monkeypatch):
+    monkeypatch.delenv("FLOORGEN_DISABLE_DEFAULT_CHECKPOINT", raising=False)
+    monkeypatch.delenv("FLOORGEN_CHECKPOINT", raising=False)
+    monkeypatch.delenv("FLOORGEN_MODEL", raising=False)
+
+    provenance = backend_provenance()
+
+    if DEFAULT_CHECKPOINT_PATH.exists():
+        assert provenance["backend"] == "flow-checkpoint"
+        assert provenance["model"] == "amd-transformer"
+        assert provenance["checkpoint"] == str(DEFAULT_CHECKPOINT_PATH)
+        assert provenance["generation_mode"] == "raw"
+    else:
+        assert provenance["backend"] == "baseline"
+
+
+def test_backend_provenance_can_select_mlp_alias(monkeypatch):
+    monkeypatch.delenv("FLOORGEN_DISABLE_DEFAULT_CHECKPOINT", raising=False)
+    monkeypatch.delenv("FLOORGEN_CHECKPOINT", raising=False)
+    monkeypatch.setenv("FLOORGEN_MODEL", "mlp")
+
+    provenance = backend_provenance()
+
+    if MLP_CHECKPOINT_PATH.exists():
+        assert provenance["backend"] == "flow-checkpoint"
+        assert provenance["model"] == "mlp"
+        assert provenance["checkpoint"] == str(MLP_CHECKPOINT_PATH)
+    else:
+        assert provenance["backend"] == "baseline"
 
 
 def test_generate_can_use_ranked_env_mode(monkeypatch):

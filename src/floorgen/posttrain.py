@@ -41,9 +41,18 @@ class PostTrainResult:
     dry_run: bool = False
 
 
-def checkpoint_sha256(path: Path) -> str:
+def resolve_checkpoint_path(path: str | Path) -> Path:
+    """Resolve checkpoint aliases such as ``mlp`` into concrete paths."""
+
+    from .generate import resolve_checkpoint_reference
+
+    return Path(resolve_checkpoint_reference(str(path))).expanduser()
+
+
+def checkpoint_sha256(path: str | Path) -> str:
     """Return a stable checkpoint content hash for provenance sidecars."""
 
+    path = resolve_checkpoint_path(path)
     h = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
@@ -51,11 +60,12 @@ def checkpoint_sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def load_checkpoint_metadata(path: Path, device: str = "cpu") -> dict[str, Any]:
+def load_checkpoint_metadata(path: str | Path, device: str = "cpu") -> dict[str, Any]:
     """Load checkpoint metadata without requiring callers to know torch details."""
 
     import torch
 
+    path = resolve_checkpoint_path(path)
     checkpoint = torch.load(path, map_location=device)
     return {
         "config": checkpoint.get("config", {}),
@@ -148,6 +158,7 @@ def register_checkpoint_generator(
 ) -> dict[str, Any]:
     """Install a checkpoint-backed sampler as ``floorgen.generate.GENERATOR``."""
 
+    checkpoint_path = resolve_checkpoint_path(checkpoint_path)
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"checkpoint not found: {checkpoint_path}")
     generator = load_generator(
@@ -196,7 +207,7 @@ def run_post_training(
     if export_format not in ("parquet", "csv"):
         raise ValueError("export_format must be 'parquet' or 'csv'")
 
-    checkpoint_path = Path(checkpoint_path)
+    checkpoint_path = resolve_checkpoint_path(checkpoint_path)
     units_path = Path(units_path)
     output_dir = Path(output_dir)
     outline_records = load_outline_records_from_units(units_path, split=split, limit=limit)

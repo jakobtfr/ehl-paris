@@ -221,10 +221,10 @@ The evaluator reports outside, overlap, gap, and invalid-rate metrics.
 uv sync --extra dev
 
 # Smoke test (no data needed)
-python scripts/smoke_test.py
+uv run --extra train python scripts/smoke_test.py
 
-# Generate with trained checkpoint
-FLOORGEN_CHECKPOINT=checkpoints/flow.pt python -c \
+# Generate with default AMD checkpoint
+python -c \
   "from shapely.geometry import box; from floorgen.generate import generate; \
    print(len(generate(box(0,0,10,8))), 'rooms')"
 

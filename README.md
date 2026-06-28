@@ -41,7 +41,7 @@ Dwellings).
          ▼
 ┌────────────────────┐      ┌────────────────────────────────┐
 │ GENERATOR backend  │◀─────│ Trained flow checkpoint          │
-│ (pluggable seam)   │      │ OR baseline heuristic (default) │
+│ (pluggable seam)   │      │ OR baseline if checkpoint absent│
 └────────┬───────────┘      └────────────────────────────────┘
          │ list[RoomMRR]
          ▼
@@ -148,12 +148,13 @@ See [`.env.example`](.env.example) for all variables.
 | `MSD_KAGGLE_DIR` | Extracted Kaggle directory; supports split CSVs or `train/full_out` + `test/full_out` floor-id markers | Alternative to explicit split paths |
 | `FLOORGEN_PROCESSED` | Output dir for preprocessed data (default: `data/processed`) | No |
 | `FLOORGEN_REPORTS` | Output dir for preprocessing reports (default: `reports`) | No |
-| `FLOORGEN_CHECKPOINT` | Optional checkpoint path auto-loaded by `floorgen.generate` | For trained generation |
-| `FLOORGEN_DEVICE` | Torch device for checkpoint generation (`cpu`, `cuda`) | No |
-| `FLOORGEN_SAMPLE_STEPS` | Euler steps for checkpoint sampler | No |
+| `FLOORGEN_MODEL` | Model alias when `FLOORGEN_CHECKPOINT` is unset: `amd-transformer` or `mlp`; default `amd-transformer` | No |
+| `FLOORGEN_CHECKPOINT` | Optional checkpoint override; accepts aliases (`amd-transformer`, `mlp`) or a checkpoint path | No |
+| `FLOORGEN_DEVICE` | Torch device for checkpoint generation (`auto`, `mps`, `cuda`, `cpu`); default `auto` prefers Mac MPS, then CUDA, then CPU | No |
+| `FLOORGEN_SAMPLE_STEPS` | Euler steps for checkpoint sampler; default `16` | No |
 | `FLOORGEN_PRESENCE_THRESHOLD` | Room-presence threshold for checkpoint sampler | No |
-| `FLOORGEN_GENERATION_MODE` | `raw` or `ranked` for the one-argument `generate(outline)` entry point | No |
-| `FLOORGEN_CANDIDATE_BUDGET` | Candidate pool size for ranked generation | No |
+| `FLOORGEN_GENERATION_MODE` | `raw` or `ranked` for the one-argument `generate(outline)` entry point; default `ranked` | No |
+| `FLOORGEN_CANDIDATE_BUDGET` | Candidate pool size for ranked generation; default `16` | No |
 
 ### Run
 
@@ -184,8 +185,11 @@ uv run --extra train python scripts/train_flow.py \
   --out checkpoints/flow-smoke.pt \
   --epochs 1 --batch-size 2 --max-steps 2 --device cpu
 
-# 4. Generate rooms for an outline (baseline smoke test unless checkpoint registered)
-uv run python -B -c "from shapely.geometry import box; from floorgen.generate import generate; print(len(generate(box(0,0,10,8))), 'rooms')"
+# 4. Generate rooms for an outline.
+#    If checkpoints/flow-transformer-amd-862d422.pt exists, this auto-loads
+#    the AMD Transformer in ranked mode; otherwise it reports the fallback in
+#    backend provenance.
+uv run --extra train python -B -c "from shapely.geometry import box; import floorgen.generate as g; print(g.backend_provenance()); print(len(g.generate(box(0,0,10,8))), 'rooms')"
 
 # 5. Post-training checkpoint evaluation/export
 uv run --extra train python scripts/post_train.py \
@@ -200,37 +204,38 @@ uv run --extra train python scripts/evaluate.py \
   --split test \
   --limit 3 \
   --checkpoint checkpoints/flow-transformer-amd-862d422.pt \
-  --device cpu --steps 4 --threshold 0.5 \
-  --mode ranked --candidate-budget 4 \
+  --threshold 0.5 \
+  --mode ranked \
   --real-metrics \
   --n-samples 1 \
   --output reports/final_test_metrics_smoke.json
 
-# 6. Use a trained checkpoint through the canonical generate(outline) signature.
-FLOORGEN_CHECKPOINT=checkpoints/flow-transformer-amd-862d422.pt \
-FLOORGEN_DEVICE=cpu \
-FLOORGEN_SAMPLE_STEPS=4 \
-FLOORGEN_PRESENCE_THRESHOLD=0.5 \
-FLOORGEN_GENERATION_MODE=ranked \
-FLOORGEN_CANDIDATE_BUDGET=4 \
-uv run --extra train python -B -c "from shapely.geometry import box; from floorgen.generate import generate; print(len(generate(box(0,0,10,8))), 'rooms')"
+# 6. Explicit AMD checkpoint command, equivalent to the local default when the
+#    checkpoint exists.
+uv run --extra train python -B -c "from shapely.geometry import box; import floorgen.generate as g; print(g.backend_provenance()); print(len(g.generate(box(0,0,10,8))), 'rooms')"
+
+# 6b. Run the trained legacy MLP checkpoint locally on the same Mac GPU resolver.
+FLOORGEN_MODEL=mlp \
+FLOORGEN_DEVICE=auto \
+uv run --extra train python -B -c "from shapely.geometry import box; import floorgen.generate as g; print(g.backend_provenance()); print(len(g.generate(box(0,0,10,8))), 'rooms')"
 
 # 7. Tests + lint. Include --extra train to exercise model/post-training tests.
 uv run --extra dev --extra train pytest -q
 uv run --extra dev ruff check src tests
 
-# 8. Quick smoke test (no external data or gradio needed)
-uv run python scripts/smoke_test.py
+# 8. Quick smoke test (no external data or gradio needed; uses checkpoint inference)
+uv run --extra train python scripts/smoke_test.py
 
-# 9. Launch Gradio demo
-uv run --extra demo python app.py
+# 9. Launch Gradio demo. The control panel is pre-filled with the AMD checkpoint
+#    when checkpoints/flow-transformer-amd-862d422.pt exists locally.
+uv run --with gradio --extra train python app.py
 
-# 10. Launch checkpoint-backed judge dashboard
+# 10. Launch checkpoint-backed judge dashboard with explicit env vars
 FLOORGEN_CHECKPOINT=checkpoints/flow-transformer-amd-862d422.pt \
-FLOORGEN_DEVICE=cpu \
-FLOORGEN_SAMPLE_STEPS=4 \
+FLOORGEN_DEVICE=auto \
+FLOORGEN_SAMPLE_STEPS=16 \
 FLOORGEN_GENERATION_MODE=ranked \
-FLOORGEN_CANDIDATE_BUDGET=4 \
+FLOORGEN_CANDIDATE_BUDGET=16 \
 uv run --with gradio --extra train python app.py
 ```
 
@@ -238,9 +243,9 @@ uv run --with gradio --extra train python app.py
 
 ## Demo Flow
 
-1. **Launch** the Gradio app: `uv run --with gradio python app.py` for the
-   labelled baseline fallback, or use the checkpoint-backed command above for
-   the trained Transformer demo.
+1. **Launch** the Gradio app: `uv run --with gradio --extra train python app.py`.
+   The local default is the AMD Transformer checkpoint at
+   `checkpoints/flow-transformer-amd-862d422.pt` in ranked mode.
 2. **Select** a preset outline (real MSD apartments of varying size) or paste custom WKT.
 3. **Choose** same-outline diversity, near-twin input sensitivity, raw-vs-ranked
    comparison, or single-sample inspection.
@@ -256,21 +261,22 @@ uv run --with gradio --extra train python app.py
    Model, Metrics, Pitch Flow, and Limitations tabs. Vector export includes
    GeoJSON plus WKT/CSV rows and downloadable GeoJSON/CSV/provenance files.
 
-The demo always uses whatever backend is wired into `GENERATOR`. By default this
-is the heuristic baseline unless a checkpoint-backed sampler is registered. For a
-local checkpoint-backed demo, set
-`FLOORGEN_CHECKPOINT=checkpoints/flow-transformer-amd-862d422.pt` before launch.
-The UI shows baseline fallback, flow checkpoint sampler, custom generator,
-missing-checkpoint, and checkpoint-load-error states explicitly.
+The demo always uses whatever backend is wired into `GENERATOR`. In this local
+workspace it auto-loads the AMD checkpoint when
+`checkpoints/flow-transformer-amd-862d422.pt` exists. The UI still shows
+baseline fallback, missing-checkpoint, and checkpoint-load-error states
+explicitly for fresh clones or deployments where the large checkpoint artifact
+has not been uploaded.
 
 ---
 
 ## Known Limitations
 
-- **Baseline fallback active by default.** The current `GENERATOR` uses a heuristic
-  space-partitioning baseline (`baseline.py`). This satisfies the `generate()`
-  contract and produces valid geometry, but does **not** constitute the scored
-  diffusion/flow model unless replaced by a loaded checkpoint sampler.
+- **AMD checkpoint is the default local backend.** `floorgen.generate` now
+  auto-loads `checkpoints/flow-transformer-amd-862d422.pt` in ranked mode when
+  that file exists locally. The heuristic baseline (`baseline.py`) is retained
+  only as a missing-artifact/debug fallback and should not be presented as the
+  scored model.
 - **AMD-trained checkpoint exists locally, but weights are not committed here.**
   The primary checkpoint path is `checkpoints/flow-transformer-amd-862d422.pt`.
   Raw strict repair still rejects many checkpoint samples because generated
@@ -298,8 +304,10 @@ missing-checkpoint, and checkpoint-load-error states explicitly.
 
 ## Wiring in the Trained Model
 
-Train a checkpoint with `scripts/train_flow.py`, load it as a
-`GENERATOR`-compatible sampler, and register it:
+The local runtime auto-loads `checkpoints/flow-transformer-amd-862d422.pt` when
+that file is present. To train or test another checkpoint with
+`scripts/train_flow.py`, load it as a `GENERATOR`-compatible sampler and
+register it:
 
 ```python
 import floorgen.generate
@@ -307,17 +315,17 @@ from floorgen.model.sampler import load_generator
 
 floorgen.generate.GENERATOR = load_generator(
     "checkpoints/flow.pt",
-    device="cpu",      # or "cuda" on the GPU box
-    steps=32,
+    device="mps",      # use "cpu" only when local GPU is unavailable
+    steps=16,
     threshold=0.5,
 )
 ```
 
 The repair layer, evaluator, contract tests, demo, and `generate(outline)`
-signature all remain unchanged. To use ranked generation through the canonical
-one-argument entry point, set `FLOORGEN_GENERATION_MODE=ranked`. Document the
-generation seed, candidate count, ranking method, checkpoint, and config hash
-for submitted outputs.
+signature all remain unchanged. Ranked generation is the default for the AMD
+checkpoint path; raw mode is available for audits with
+`FLOORGEN_GENERATION_MODE=raw`. Document the generation seed, candidate count,
+ranking method, checkpoint, and config hash for submitted outputs.
 
 For the full post-training handoff, run `scripts/post_train.py`. It loads the
 checkpoint, scores validation outlines, exports generated layouts, and writes:

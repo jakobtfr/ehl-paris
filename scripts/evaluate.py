@@ -27,7 +27,15 @@ from floorgen.config import SEED
 from floorgen.eval.metrics import distribution_metrics, validity_metrics
 from floorgen.eval.realism import try_image_distribution_report
 from floorgen.eval.render import RenderConfig, render_layout
-from floorgen.generate import backend_provenance
+from floorgen.generate import (
+    DEFAULT_CANDIDATE_BUDGET,
+    DEFAULT_DEVICE,
+    DEFAULT_GENERATION_MODE,
+    DEFAULT_PRESENCE_THRESHOLD,
+    DEFAULT_SAMPLE_STEPS,
+    backend_provenance,
+    default_device,
+)
 
 
 def _demo_outlines(n: int = 5) -> dict:
@@ -260,17 +268,31 @@ def main() -> None:
     parser.add_argument("--render-size", type=int, default=512)
     parser.add_argument("--output", type=Path, default=None, help="JSON report output path")
     parser.add_argument("--checkpoint", type=Path, default=None, help="Optional flow checkpoint to load")
-    parser.add_argument("--steps", type=int, default=32, help="Euler sampler steps for checkpoint")
-    parser.add_argument("--threshold", type=float, default=0.5, help="Presence threshold for checkpoint")
-    parser.add_argument("--device", default="cpu", help="Torch device for checkpoint inference")
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=int(DEFAULT_SAMPLE_STEPS),
+        help="Euler sampler steps for checkpoint",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=float(DEFAULT_PRESENCE_THRESHOLD),
+        help="Presence threshold for checkpoint",
+    )
+    parser.add_argument(
+        "--device",
+        default=default_device() if DEFAULT_DEVICE == "auto" else DEFAULT_DEVICE,
+        help="Torch device for checkpoint inference",
+    )
     parser.add_argument(
         "--real-metrics",
         action="store_true",
         help="Compute FID and PRDC against real layouts from --units",
     )
     parser.add_argument("--prdc-k", type=int, default=5, help="k for PRDC density/coverage")
-    parser.add_argument("--mode", choices=["raw", "ranked"], default="raw")
-    parser.add_argument("--candidate-budget", type=int, default=None)
+    parser.add_argument("--mode", choices=["raw", "ranked"], default=DEFAULT_GENERATION_MODE)
+    parser.add_argument("--candidate-budget", type=int, default=int(DEFAULT_CANDIDATE_BUDGET))
     args = parser.parse_args()
 
     if not args.outlines and not args.units and not args.demo:
@@ -289,6 +311,7 @@ def main() -> None:
         parser.error("--prdc-k must be positive")
     if args.candidate_budget is not None and args.candidate_budget <= 0:
         parser.error("--candidate-budget must be positive")
+    effective_device = default_device() if str(args.device).lower() == "auto" else args.device
 
     real_layouts = None
     if args.units:
@@ -306,19 +329,24 @@ def main() -> None:
 
         checkpoint_sha = checkpoint_sha256(Path(provenance["checkpoint"]))
     if args.checkpoint is not None:
-        from floorgen.posttrain import checkpoint_sha256, register_checkpoint_generator
+        from floorgen.posttrain import (
+            checkpoint_sha256,
+            register_checkpoint_generator,
+            resolve_checkpoint_path,
+        )
 
+        resolved_checkpoint = resolve_checkpoint_path(args.checkpoint)
         register_checkpoint_generator(
-            args.checkpoint,
-            device=args.device,
+            resolved_checkpoint,
+            device=effective_device,
             steps=args.steps,
             threshold=args.threshold,
         )
-        checkpoint = str(args.checkpoint)
-        checkpoint_sha = checkpoint_sha256(args.checkpoint)
+        checkpoint = str(resolved_checkpoint)
+        checkpoint_sha = checkpoint_sha256(resolved_checkpoint)
         report_steps = args.steps
         report_threshold = args.threshold
-        report_device = args.device
+        report_device = effective_device
 
     print(f"Evaluating {len(outlines)} outlines x {args.n_samples} samples ({args.mode})...")
     report = evaluate(

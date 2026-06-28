@@ -34,7 +34,15 @@ from ..baseline import baseline_sample  # noqa: E402
 from ..config import ROOM_NAMES, SEED  # noqa: E402
 from ..eval.metrics import validity_metrics  # noqa: E402
 from ..eval.render import ROOM_COLORS  # noqa: E402
-from ..generate import sample_layouts  # noqa: E402
+from ..generate import (  # noqa: E402
+    DEFAULT_CANDIDATE_BUDGET,
+    DEFAULT_MODEL_ALIAS,
+    DEFAULT_PRESENCE_THRESHOLD,
+    DEFAULT_SAMPLE_STEPS,
+    default_device,
+    resolve_checkpoint_reference,
+    sample_layouts,
+)
 from .evidence import (  # noqa: E402
     EXPORT_COLUMNS,
     build_export_rows,
@@ -342,6 +350,7 @@ CSS = """
 
 @dataclass(frozen=True)
 class ModelSettings:
+    model_alias: str
     checkpoint_path: str
     device: str
     steps: int
@@ -365,8 +374,12 @@ class GeneratedGroup:
     ranking: dict[str, Any] | None = None
 
 
-_APPLIED_MODEL_KEY: tuple[str, str, int, float] | None = None
+_APPLIED_MODEL_KEY: tuple[str, str, str, int, float, int] | None = None
 _MODEL_STATUS: dict[str, Any] | None = None
+MODEL_CHOICES = [
+    ("AMD Transformer (1h ROCm)", "amd-transformer"),
+    ("Trained MLP (legacy)", "mlp"),
+]
 
 
 def _nonempty_env(name: str) -> str | None:
@@ -390,16 +403,61 @@ def _env_float(name: str, default: float, legacy: str | None = None) -> float:
         return default
 
 
+def _initial_model_alias() -> str:
+    explicit = _nonempty_env("FLOORGEN_MODEL")
+    return explicit or DEFAULT_MODEL_ALIAS
+
+
+def _default_checkpoint_control_value(model_alias: str | None = None) -> str:
+    explicit = _nonempty_env("FLOORGEN_CHECKPOINT")
+    if explicit:
+        resolved = Path(resolve_checkpoint_reference(explicit))
+    else:
+        resolved = Path(resolve_checkpoint_reference(model_alias or _initial_model_alias()))
+    if resolved.exists():
+        try:
+            return str(resolved.relative_to(REPO_ROOT))
+        except ValueError:
+            return str(resolved)
+    return ""
+
+
+def _initial_device_value() -> str:
+    explicit = _nonempty_env("FLOORGEN_DEVICE")
+    if explicit and explicit.lower() != "auto":
+        return explicit
+    return default_device()
+
+
 def _initial_model_settings() -> ModelSettings:
+    model_alias = _initial_model_alias()
     return ModelSettings(
-        checkpoint_path=_nonempty_env("FLOORGEN_CHECKPOINT") or "",
-        device=_nonempty_env("FLOORGEN_DEVICE") or "cpu",
-        steps=max(1, _env_int("FLOORGEN_SAMPLE_STEPS", 32, "FLOORGEN_DEMO_STEPS")),
+        model_alias=model_alias,
+        checkpoint_path=_default_checkpoint_control_value(model_alias),
+        device=_initial_device_value(),
+        steps=max(
+            1,
+            _env_int(
+                "FLOORGEN_SAMPLE_STEPS",
+                int(DEFAULT_SAMPLE_STEPS),
+                "FLOORGEN_DEMO_STEPS",
+            ),
+        ),
         threshold=min(
             1.0,
-            max(0.0, _env_float("FLOORGEN_PRESENCE_THRESHOLD", 0.5, "FLOORGEN_DEMO_THRESHOLD")),
+            max(
+                0.0,
+                _env_float(
+                    "FLOORGEN_PRESENCE_THRESHOLD",
+                    float(DEFAULT_PRESENCE_THRESHOLD),
+                    "FLOORGEN_DEMO_THRESHOLD",
+                ),
+            ),
         ),
-        candidate_budget=candidate_budget_from(_nonempty_env("FLOORGEN_CANDIDATE_BUDGET"), 16),
+        candidate_budget=candidate_budget_from(
+            _nonempty_env("FLOORGEN_CANDIDATE_BUDGET"),
+            int(DEFAULT_CANDIDATE_BUDGET),
+        ),
     )
 
 
@@ -417,15 +475,19 @@ def _preset_display_label(name: str) -> str:
 
 
 def _settings_from_controls(
-    checkpoint_path: str,
+    model_alias: str,
+    checkpoint_override: str,
     device: str,
     steps: int | float,
     threshold: int | float,
     candidate_budget: int | float,
 ) -> ModelSettings:
+    selected_model = (model_alias or DEFAULT_MODEL_ALIAS).strip()
+    checkpoint_ref = (checkpoint_override or "").strip() or selected_model
     return ModelSettings(
-        checkpoint_path=(checkpoint_path or "").strip(),
-        device=(device or "cpu").strip(),
+        model_alias=selected_model,
+        checkpoint_path=resolve_checkpoint_reference(checkpoint_ref),
+        device=(device or "auto").strip(),
         steps=max(1, int(steps)),
         threshold=min(1.0, max(0.0, float(threshold))),
         candidate_budget=candidate_budget_from(candidate_budget, INITIAL_SETTINGS.candidate_budget),
@@ -453,19 +515,23 @@ def _configure_generator(settings: ModelSettings) -> dict[str, Any]:
     global _APPLIED_MODEL_KEY, _MODEL_STATUS
 
     key = (
+        settings.model_alias,
         settings.checkpoint_path,
         settings.device,
         int(settings.steps),
         round(float(settings.threshold), 6),
+        int(settings.candidate_budget),
     )
     if key == _APPLIED_MODEL_KEY and _MODEL_STATUS is not None:
         return _MODEL_STATUS
 
     module = importlib.import_module("floorgen.generate")
+    os.environ["FLOORGEN_MODEL"] = settings.model_alias
     os.environ["FLOORGEN_DEVICE"] = settings.device
     os.environ["FLOORGEN_SAMPLE_STEPS"] = str(settings.steps)
     os.environ["FLOORGEN_PRESENCE_THRESHOLD"] = str(settings.threshold)
     os.environ["FLOORGEN_CANDIDATE_BUDGET"] = str(settings.candidate_budget)
+    effective_device = default_device()
 
     if not settings.checkpoint_path:
         os.environ.pop("FLOORGEN_CHECKPOINT", None)
@@ -475,12 +541,16 @@ def _configure_generator(settings: ModelSettings) -> dict[str, Any]:
             "state": "baseline",
             "backend_label": "Baseline fallback",
             "backend_path": _generator_import_path(),
+            "model_alias": settings.model_alias,
             "checkpoint_path": "",
             "checkpoint_state": "not configured",
-            "message": "No FLOORGEN_CHECKPOINT is set; using the heuristic baseline.",
+            "message": (
+                "Checkpoint field was cleared; using the heuristic baseline. "
+                "The normal local default is the AMD Transformer checkpoint."
+            ),
         }
     else:
-        path = Path(settings.checkpoint_path).expanduser()
+        path = Path(resolve_checkpoint_reference(settings.checkpoint_path)).expanduser()
         os.environ["FLOORGEN_CHECKPOINT"] = str(path)
         if not path.exists():
             module.GENERATOR = baseline_sample
@@ -489,6 +559,7 @@ def _configure_generator(settings: ModelSettings) -> dict[str, Any]:
                 "state": "missing",
                 "backend_label": "Checkpoint missing",
                 "backend_path": _generator_import_path(),
+                "model_alias": settings.model_alias,
                 "checkpoint_path": str(path),
                 "checkpoint_state": "missing",
                 "message": f"FLOORGEN_CHECKPOINT is set but missing: {path}",
@@ -499,7 +570,7 @@ def _configure_generator(settings: ModelSettings) -> dict[str, Any]:
 
                 module.GENERATOR = load_generator(
                     path,
-                    device=settings.device,
+                    device=effective_device,
                     steps=settings.steps,
                     threshold=settings.threshold,
                 )
@@ -508,6 +579,7 @@ def _configure_generator(settings: ModelSettings) -> dict[str, Any]:
                     "state": "loaded",
                     "backend_label": "Flow checkpoint sampler",
                     "backend_path": _generator_import_path(),
+                    "model_alias": settings.model_alias,
                     "checkpoint_path": str(path),
                     "checkpoint_state": "loaded",
                     "message": f"Loaded checkpoint sampler: {path.name}",
@@ -519,13 +591,14 @@ def _configure_generator(settings: ModelSettings) -> dict[str, Any]:
                     "state": "error",
                     "backend_label": "Checkpoint load error",
                     "backend_path": _generator_import_path(),
+                    "model_alias": settings.model_alias,
                     "checkpoint_path": str(path),
                     "checkpoint_state": "error",
                     "message": f"Checkpoint load failed: {exc}",
                 }
 
     status.update({
-        "device": settings.device,
+        "device": effective_device,
         "steps": int(settings.steps),
         "threshold": float(settings.threshold),
         "candidate_budget": int(settings.candidate_budget),
@@ -819,8 +892,9 @@ def _summary_html(
       <span class="run-subtitle">{html.escape(checkpoint_note)} The generated rooms below are vector polygons; detailed provenance lives in the tabs.</span>
     </div>
     <div class="status-pills">
+      <span class="status-pill good">{html.escape(str(model_status.get("model_alias") or settings.model_alias))}</span>
       <span class="status-pill {backend_class}">{html.escape(checkpoint_name)}</span>
-      <span class="status-pill">{html.escape(settings.device)} · {settings.steps} steps</span>
+      <span class="status-pill">{html.escape(str(model_status.get("device") or settings.device))} · {settings.steps} steps</span>
       <span class="status-pill">{settings.candidate_budget} candidates</span>
       <span class="status-pill">{html.escape(metric_source)}</span>
     </div>
@@ -1012,9 +1086,11 @@ def _provenance_json(
         "generation_mode": generation_mode,
         "mode": generation_mode_code(generation_mode),
         "model_settings": {
+            "model_alias": settings.model_alias,
             "checkpoint_path": settings.checkpoint_path,
+            "resolved_checkpoint_path": model_status.get("checkpoint_path"),
             "checkpoint_state": model_status["checkpoint_state"],
-            "device": settings.device,
+            "device": model_status.get("device", settings.device),
             "steps": settings.steps,
             "presence_threshold": settings.threshold,
             "candidate_budget": settings.candidate_budget,
@@ -1203,6 +1279,9 @@ MODEL_MARKDOWN = """
 - Ranked mode: candidate sampling plus repair-aware scoring and diversity selection. It is documented test-time compute, not raw model quality.
 
 Primary checkpoint: `checkpoints/flow-transformer-amd-862d422.pt`.
+The model selector can also run the trained legacy MLP checkpoint at
+`checkpoints/flow-full-8303584.pt`; both run locally through the same device
+resolver (`auto` prefers Mac MPS).
 
 Training metadata from the repo docs: AMD Instinct MI300X / ROCm-HIP through PyTorch's `cuda` API, `d_model=512`, 4 layers, 8 heads, `K=24`, 128 boundary points, 67 epochs, 4,212 optimizer steps, batch size 256, one-hour cap.
 
@@ -1243,13 +1322,21 @@ def generate_showcase(
     generation_mode: str,
     n_samples: int,
     seed: int | float,
+    model_alias: str,
     candidate_budget: int | float,
-    checkpoint_path: str,
+    checkpoint_override: str,
     device: str,
     steps: int | float,
     threshold: int | float,
 ) -> tuple[Any, str, pd.DataFrame, str, pd.DataFrame, str, str, pd.DataFrame, str, str, str, str, str]:
-    settings = _settings_from_controls(checkpoint_path, device, steps, threshold, candidate_budget)
+    settings = _settings_from_controls(
+        model_alias,
+        checkpoint_override,
+        device,
+        steps,
+        threshold,
+        candidate_budget,
+    )
     model_status = _configure_generator(settings)
     outline = _parse_outline(preset_name, custom_wkt)
     seed_int = int(seed)
@@ -1359,6 +1446,11 @@ def build_demo() -> gr.Blocks:
                         value="Same outline diversity",
                         label="Showcase",
                     )
+                    model_selector = gr.Dropdown(
+                        choices=MODEL_CHOICES,
+                        value=INITIAL_SETTINGS.model_alias,
+                        label="Model",
+                    )
                     go = gr.Button("Generate layouts", variant="primary", elem_classes=["primary-action"])
 
                     with gr.Accordion("Run tuning", open=False):
@@ -1386,13 +1478,13 @@ def build_demo() -> gr.Blocks:
                             lines=3,
                         )
                     with gr.Accordion("Advanced model settings", open=False):
-                        checkpoint_path = gr.Textbox(
-                            value=INITIAL_SETTINGS.checkpoint_path,
-                            label="FLOORGEN_CHECKPOINT",
-                            placeholder="checkpoints/flow-transformer-amd-862d422.pt",
+                        checkpoint_override = gr.Textbox(
+                            value="",
+                            label="Checkpoint override",
+                            placeholder="Leave blank to use selected model; accepts mlp, amd-transformer, or a .pt path",
                         )
                         device = gr.Dropdown(
-                            choices=["cpu", "mps", "cuda"],
+                            choices=["auto", "mps", "cuda", "cpu"],
                             value=INITIAL_SETTINGS.device,
                             label="FLOORGEN_DEVICE",
                             allow_custom_value=True,
@@ -1468,8 +1560,9 @@ def build_demo() -> gr.Blocks:
             generation_mode,
             n_samples,
             seed,
+            model_selector,
             candidate_budget,
-            checkpoint_path,
+            checkpoint_override,
             device,
             steps,
             threshold,

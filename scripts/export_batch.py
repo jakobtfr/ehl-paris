@@ -18,7 +18,15 @@ from shapely.geometry import box
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from floorgen.export import ExportConfig, export_to_csv, export_to_parquet
-from floorgen.generate import backend_provenance
+from floorgen.generate import (
+    DEFAULT_CANDIDATE_BUDGET,
+    DEFAULT_DEVICE,
+    DEFAULT_GENERATION_MODE,
+    DEFAULT_PRESENCE_THRESHOLD,
+    DEFAULT_SAMPLE_STEPS,
+    backend_provenance,
+    default_device,
+)
 
 
 def _checkpoint_notes_from_env() -> str:
@@ -73,11 +81,25 @@ def main() -> None:
     parser.add_argument("--format", choices=["parquet", "csv"], default="parquet")
     parser.add_argument("--output-dir", type=Path, default=None)
     parser.add_argument("--checkpoint", type=Path, default=None, help="Optional flow checkpoint to load")
-    parser.add_argument("--steps", type=int, default=32, help="Euler sampler steps for checkpoint")
-    parser.add_argument("--threshold", type=float, default=0.5, help="Presence threshold for checkpoint")
-    parser.add_argument("--device", default="cpu", help="Torch device for checkpoint inference")
-    parser.add_argument("--mode", choices=["raw", "ranked"], default="raw")
-    parser.add_argument("--candidate-budget", type=int, default=None)
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=int(DEFAULT_SAMPLE_STEPS),
+        help="Euler sampler steps for checkpoint",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=float(DEFAULT_PRESENCE_THRESHOLD),
+        help="Presence threshold for checkpoint",
+    )
+    parser.add_argument(
+        "--device",
+        default=default_device() if DEFAULT_DEVICE == "auto" else DEFAULT_DEVICE,
+        help="Torch device for checkpoint inference",
+    )
+    parser.add_argument("--mode", choices=["raw", "ranked"], default=DEFAULT_GENERATION_MODE)
+    parser.add_argument("--candidate-budget", type=int, default=int(DEFAULT_CANDIDATE_BUDGET))
     parser.add_argument(
         "--allow-partial",
         action="store_true",
@@ -99,6 +121,7 @@ def main() -> None:
         parser.error("--threshold must be between 0 and 1")
     if args.candidate_budget is not None and args.candidate_budget <= 0:
         parser.error("--candidate-budget must be positive")
+    effective_device = default_device() if str(args.device).lower() == "auto" else args.device
 
     if args.units:
         from floorgen.posttrain import load_outline_records_from_units
@@ -114,21 +137,26 @@ def main() -> None:
     checkpoint = provenance["checkpoint"] or provenance["backend"] or "baseline"
     config_notes = _checkpoint_notes_from_env()
     if args.checkpoint is not None:
-        from floorgen.posttrain import checkpoint_sha256, register_checkpoint_generator
+        from floorgen.posttrain import (
+            checkpoint_sha256,
+            register_checkpoint_generator,
+            resolve_checkpoint_path,
+        )
 
+        resolved_checkpoint = resolve_checkpoint_path(args.checkpoint)
         metadata = register_checkpoint_generator(
-            args.checkpoint,
-            device=args.device,
+            resolved_checkpoint,
+            device=effective_device,
             steps=args.steps,
             threshold=args.threshold,
         )
-        checkpoint = str(args.checkpoint)
+        checkpoint = str(resolved_checkpoint)
         config_notes = json.dumps(
             {
-                "checkpoint_sha256": checkpoint_sha256(args.checkpoint),
+                "checkpoint_sha256": checkpoint_sha256(resolved_checkpoint),
                 "sampler_steps": args.steps,
                 "presence_threshold": args.threshold,
-                "device": args.device,
+                "device": effective_device,
                 "checkpoint_train": metadata.get("train", {}),
             },
             sort_keys=True,

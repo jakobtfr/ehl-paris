@@ -67,7 +67,7 @@ Key files:
 ## Verification Commands
 
 ```bash
-uv run python scripts/smoke_test.py
+uv run --extra train python scripts/smoke_test.py
 uv run pytest -q
 uv run ruff check src tests scripts
 uv run python scripts/evaluate.py --demo --n-samples 2
@@ -82,11 +82,8 @@ uv run --extra train python scripts/evaluate.py \
   --split test \
   --limit 3 \
   --checkpoint checkpoints/flow-transformer-amd-862d422.pt \
-  --device cpu \
-  --steps 4 \
   --threshold 0.5 \
   --mode ranked \
-  --candidate-budget 4 \
   --n-samples 1 \
   --real-metrics \
   --output reports/final_test_metrics_smoke.json
@@ -96,11 +93,8 @@ uv run --extra train python scripts/export_batch.py \
   --split test \
   --limit 3 \
   --checkpoint checkpoints/flow-transformer-amd-862d422.pt \
-  --device cpu \
-  --steps 4 \
   --threshold 0.5 \
   --mode ranked \
-  --candidate-budget 4 \
   --n-samples 1 \
   --format csv \
   --output-dir outputs/final_test_export
@@ -137,11 +131,12 @@ uv run --extra train python scripts/export_batch.py \
 
 ## Suggested Demo Script
 
-1. Open the Gradio app with `uv run --extra demo python app.py`.
-2. Show the backend provenance line. If no checkpoint is loaded, say it is the
-   baseline fallback.
+1. Open the Gradio app with `uv run --with gradio --extra train python app.py`.
+2. Show the backend provenance line. Locally this should show the AMD
+   Transformer checkpoint; if not, the checkpoint artifact is missing from that
+   environment.
 3. Generate three samples for a preset outline and point to the unchanged
    boundary, labels, and GeoJSON vector output.
-4. If a checkpoint is available, launch with `FLOORGEN_CHECKPOINT=...` and show
-   the checkpoint path, sampler steps, and threshold in the UI.
+4. Show the checkpoint path, sampler steps, threshold, ranked mode, and
+   candidate budget in the UI.
 5. Show the exported `geom` WKT schema and evaluation report commands.
