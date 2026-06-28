@@ -18,8 +18,9 @@ several diverse, valid room arrangements.
 
 **Backend provenance:** the app shows whether it is running the baseline
 fallback or a `FLOORGEN_CHECKPOINT` flow sampler, including checkpoint path,
-device, sampler steps, and presence threshold. The GeoJSON output also records
-the backend metadata for the displayed sample.
+device, sampler steps, and presence threshold. Set the Space secret
+`FLOORGEN_CHECKPOINT` to a `.pt` file path to activate the trained model.
+The GeoJSON output also records the backend metadata for the displayed sample.
 
 **Deploy:** create a Gradio Space, push this repo. Spaces reads this file's
 front-matter; rename it to `README.md` in the Space (the repo's own README is
