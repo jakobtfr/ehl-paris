@@ -142,3 +142,133 @@ class RoomFlowModel(nn.Module):
             type_logits=self.type_head(hidden),
             presence_logits=self.presence_head(hidden).squeeze(-1),
         )
+
+
+class RoomFlowTransformer(nn.Module):
+    """Transformer-based flow model matching the trained AMD checkpoint architecture.
+
+    Uses a TransformerEncoder for outline conditioning and a TransformerDecoder
+    for slot-level prediction with cross-attention to the encoded outline.
+    """
+
+    def __init__(
+        self,
+        *,
+        num_types: int = len(ROOM_NAMES),
+        k: int = MAX_ROOMS_K,
+        d_model: int = 512,
+        boundary_points: int = 128,
+        num_layers: int = 4,
+        nhead: int = 8,
+        dim_feedforward: int = 2048,
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.num_types = int(num_types)
+        self.k = int(k)
+        self.d_model = int(d_model)
+        self.boundary_points = int(boundary_points)
+
+        self.point_embedding = nn.Sequential(
+            nn.Linear(2, d_model),
+            nn.SiLU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.scale_token = nn.Sequential(
+            nn.Linear(6, d_model),
+            nn.SiLU(),
+            nn.Linear(d_model, d_model),
+        )
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, nhead=nhead,
+            dim_feedforward=dim_feedforward, dropout=dropout,
+            batch_first=True,
+        )
+        self.outline_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        self.outline_norm = nn.LayerNorm(d_model)
+
+        self.time_mlp = nn.Sequential(
+            nn.Linear(d_model, d_model),
+            nn.SiLU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.geom_embedding = nn.Sequential(
+            nn.Linear(5, d_model),
+            nn.SiLU(),
+            nn.Linear(d_model, d_model),
+        )
+        self.slot_embedding = nn.Embedding(k, d_model)
+
+        decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model, nhead=nhead,
+            dim_feedforward=dim_feedforward, dropout=dropout,
+            batch_first=True,
+        )
+        self.slot_decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+        self.slot_norm = nn.LayerNorm(d_model)
+
+        self.velocity_head = nn.Linear(d_model, 5)
+        self.type_head = nn.Linear(d_model, num_types)
+        self.presence_head = nn.Linear(d_model, 1)
+
+    def encode_outline(
+        self,
+        outline_xy: torch.Tensor,
+        scale: torch.Tensor,
+        outline_mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        B, P, _ = outline_xy.shape
+        if outline_mask is None:
+            outline_mask = torch.ones(B, P, dtype=torch.bool, device=outline_xy.device)
+
+        point_tokens = self.point_embedding(outline_xy)
+        scale_tok = self.scale_token(scale).unsqueeze(1)
+        tokens = torch.cat([scale_tok, point_tokens], dim=1)
+
+        mask_with_scale = torch.cat([
+            torch.ones(B, 1, dtype=torch.bool, device=outline_xy.device),
+            outline_mask,
+        ], dim=1)
+        src_key_padding_mask = ~mask_with_scale
+
+        encoded = self.outline_encoder(tokens, src_key_padding_mask=src_key_padding_mask)
+        return self.outline_norm(encoded)
+
+    def forward(
+        self,
+        x_t: torch.Tensor,
+        t: torch.Tensor,
+        outline_xy: torch.Tensor,
+        scale: torch.Tensor,
+        outline_mask: torch.Tensor | None = None,
+    ) -> ModelOutput:
+        B = x_t.shape[0]
+
+        memory = self.encode_outline(outline_xy, scale, outline_mask)
+
+        if outline_mask is None:
+            outline_mask = torch.ones(
+                outline_xy.shape[:2], dtype=torch.bool, device=outline_xy.device
+            )
+        memory_key_padding_mask = ~torch.cat([
+            torch.ones(B, 1, dtype=torch.bool, device=x_t.device),
+            outline_mask,
+        ], dim=1)
+
+        time_emb = self.time_mlp(sinusoidal_time_embedding(t, self.d_model))
+        geom_tokens = self.geom_embedding(x_t)
+        slot_ids = torch.arange(self.k, device=x_t.device)
+        slot_tokens = self.slot_embedding(slot_ids)[None].expand(B, -1, -1)
+        tgt = geom_tokens + slot_tokens + time_emb[:, None, :]
+
+        decoded = self.slot_decoder(
+            tgt, memory, memory_key_padding_mask=memory_key_padding_mask
+        )
+        hidden = self.slot_norm(decoded)
+
+        return ModelOutput(
+            velocity=self.velocity_head(hidden),
+            type_logits=self.type_head(hidden),
+            presence_logits=self.presence_head(hidden).squeeze(-1),
+        )
