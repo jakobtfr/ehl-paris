@@ -151,6 +151,65 @@ class TestExportCSV:
         assert "wkt" in df.columns
         assert len(df) > 0
 
+    def test_csv_metadata_sidecar(self, demo_outlines, export_cfg):
+        path = export_to_csv(demo_outlines, export_cfg)
+        meta_path = path.with_name(path.stem + "_meta.json")
+        assert meta_path.exists()
+        meta = json.loads(meta_path.read_text())
+        assert meta["checkpoint"] == "test-baseline"
+        assert meta["failures"] == []
+
+    def test_generation_failure_is_reported_by_default(
+        self,
+        demo_outlines,
+        export_cfg,
+        monkeypatch,
+    ):
+        import floorgen.export as export_module
+
+        original = export_module.sample_layouts
+
+        def fail_one(outline, **kwargs):
+            if outline.bounds == demo_outlines["unit_001"].bounds:
+                raise RuntimeError("sample exploded")
+            return original(outline, **kwargs)
+
+        monkeypatch.setattr(export_module, "sample_layouts", fail_one)
+
+        with pytest.raises(RuntimeError, match="unit_id=unit_001"):
+            export_layouts(demo_outlines, export_cfg)
+
+    def test_allow_partial_records_generation_failures(
+        self,
+        demo_outlines,
+        export_cfg,
+        monkeypatch,
+    ):
+        import floorgen.export as export_module
+
+        original = export_module.sample_layouts
+
+        def fail_one(outline, **kwargs):
+            if outline.bounds == demo_outlines["unit_001"].bounds:
+                raise RuntimeError("sample exploded")
+            return original(outline, **kwargs)
+
+        monkeypatch.setattr(export_module, "sample_layouts", fail_one)
+        cfg = ExportConfig(
+            output_dir=export_cfg.output_dir,
+            n_samples=1,
+            seed=42,
+            checkpoint="test-baseline",
+            fail_on_error=False,
+        )
+
+        df = export_layouts(demo_outlines, cfg)
+
+        assert set(df["unit_id"]) == {"unit_002"}
+        assert df.attrs["failures"] == [
+            {"unit_id": "unit_001", "error": "sample exploded"}
+        ]
+
     def test_export_batch_fails_on_invalid_checkpoint_env(self, tmp_path):
         env = {
             **os.environ,

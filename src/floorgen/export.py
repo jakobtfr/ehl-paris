@@ -39,6 +39,7 @@ class ExportConfig:
     checkpoint: str = "baseline"
     config_notes: str = ""
     include_validity: bool = True
+    fail_on_error: bool = True
 
 
 def _room_to_record(
@@ -111,6 +112,8 @@ def export_layouts(
             )
         except Exception as exc:
             failures.append((unit_id, str(exc)))
+            if cfg.fail_on_error:
+                raise RuntimeError(f"layout generation failed for unit_id={unit_id}: {exc}") from exc
             continue
 
         for sample_idx, layout in enumerate(layouts):
@@ -129,6 +132,7 @@ def export_layouts(
         raise RuntimeError(f"layout export produced no room rows{detail}")
 
     df = pd.DataFrame(rows)
+    df.attrs["failures"] = [{"unit_id": unit_id, "error": error} for unit_id, error in failures]
     return df
 
 
@@ -158,6 +162,7 @@ def export_to_parquet(
         "total_rooms_exported": len(df),
         "columns": list(df.columns),
         "room_labels": list(ROOM_NAMES),
+        "failures": df.attrs.get("failures", []),
     }
     meta_path = cfg.output_dir / f"layouts_{ts}_meta.json"
     meta_path.write_text(json.dumps(metadata, indent=2))
@@ -179,4 +184,18 @@ def export_to_csv(
     ts = time.strftime("%Y%m%d_%H%M%S")
     csv_path = cfg.output_dir / f"layouts_{ts}.csv"
     df.to_csv(csv_path, index=False)
+    metadata = {
+        "timestamp": ts,
+        "n_outlines": len(outlines),
+        "n_samples_per_outline": cfg.n_samples,
+        "seed": cfg.seed,
+        "checkpoint": cfg.checkpoint,
+        "config_notes": cfg.config_notes,
+        "total_rooms_exported": len(df),
+        "columns": list(df.columns),
+        "room_labels": list(ROOM_NAMES),
+        "failures": df.attrs.get("failures", []),
+    }
+    meta_path = csv_path.with_name(csv_path.stem + "_meta.json")
+    meta_path.write_text(json.dumps(metadata, indent=2))
     return csv_path

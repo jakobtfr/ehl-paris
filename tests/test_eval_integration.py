@@ -7,6 +7,9 @@ These tests verify the full workflow judges would run:
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -139,3 +142,28 @@ class TestEndToEndExport:
         df2 = export_layouts(outlines, cfg)
         assert df1["wkt"].tolist() == df2["wkt"].tolist()
         assert df1["label"].tolist() == df2["label"].tolist()
+
+
+class TestEvaluateCLI:
+    def test_demo_report_includes_backend_and_renderer(self, tmp_path):
+        report_path = tmp_path / "eval.json"
+        result = subprocess.run(
+            [
+                sys.executable,
+                "scripts/evaluate.py",
+                "--demo",
+                "--n-samples",
+                "1",
+                "--output",
+                str(report_path),
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        assert "Layouts generated" in result.stdout
+        report = json.loads(report_path.read_text())
+        assert report["backend"]["checkpoint"] == "baseline"
+        assert report["renderer"]["size"] == 512

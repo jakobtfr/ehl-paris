@@ -52,6 +52,11 @@ def evaluate(
     n_samples: int = 4,
     seed: int = SEED,
     render_size: int = 512,
+    checkpoint: str = "baseline",
+    checkpoint_sha: str | None = None,
+    steps: int | None = None,
+    threshold: float | None = None,
+    device: str | None = None,
 ) -> dict:
     """Run full evaluation pipeline, return structured report."""
     cfg = RenderConfig(size=render_size)
@@ -110,6 +115,19 @@ def evaluate(
         "n_layouts_generated": n_layouts,
         "n_failures": len(failures),
         "elapsed_seconds": round(elapsed, 2),
+        "backend": {
+            "checkpoint": checkpoint,
+            "checkpoint_sha256": checkpoint_sha,
+            "sampler_steps": steps,
+            "presence_threshold": threshold,
+            "device": device,
+        },
+        "renderer": {
+            "size": cfg.size,
+            "pad_frac": cfg.pad_frac,
+            "edge_width": cfg.edge_width,
+            "background": cfg.bg,
+        },
         "validity": {k: round(float(v), 4) for k, v in agg_validity.items()},
         "distribution": {
             k: (round(v, 4) if isinstance(v, float) else v)
@@ -128,16 +146,46 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=SEED)
     parser.add_argument("--render-size", type=int, default=512)
     parser.add_argument("--output", type=Path, default=None, help="JSON report output path")
+    parser.add_argument("--checkpoint", type=Path, default=None, help="Optional flow checkpoint to load")
+    parser.add_argument("--steps", type=int, default=32, help="Euler sampler steps for checkpoint")
+    parser.add_argument("--threshold", type=float, default=0.5, help="Presence threshold for checkpoint")
+    parser.add_argument("--device", default="cpu", help="Torch device for checkpoint inference")
     args = parser.parse_args()
 
     if not args.outlines and not args.demo:
         parser.error("Provide --outlines <path> or --demo")
+    if args.steps <= 0:
+        parser.error("--steps must be positive")
+    if not 0.0 <= args.threshold <= 1.0:
+        parser.error("--threshold must be between 0 and 1")
 
     outlines = _demo_outlines() if args.demo else _load_outlines(args.outlines)
+    checkpoint = "baseline"
+    checkpoint_sha = None
+    if args.checkpoint is not None:
+        from floorgen.posttrain import checkpoint_sha256, register_checkpoint_generator
+
+        register_checkpoint_generator(
+            args.checkpoint,
+            device=args.device,
+            steps=args.steps,
+            threshold=args.threshold,
+        )
+        checkpoint = str(args.checkpoint)
+        checkpoint_sha = checkpoint_sha256(args.checkpoint)
 
     print(f"Evaluating {len(outlines)} outlines x {args.n_samples} samples...")
-    report = evaluate(outlines, n_samples=args.n_samples, seed=args.seed,
-                      render_size=args.render_size)
+    report = evaluate(
+        outlines,
+        n_samples=args.n_samples,
+        seed=args.seed,
+        render_size=args.render_size,
+        checkpoint=checkpoint,
+        checkpoint_sha=checkpoint_sha,
+        steps=args.steps if args.checkpoint is not None else None,
+        threshold=args.threshold if args.checkpoint is not None else None,
+        device=args.device if args.checkpoint is not None else None,
+    )
 
     print(f"\nResults ({report['elapsed_seconds']}s):")
     print(f"  Layouts generated: {report['n_layouts_generated']}")
