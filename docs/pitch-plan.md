@@ -174,11 +174,14 @@ weights and exports.
 | Contract, repair, demo, tests, evaluator, export | Implemented |
 | Flow training path and checkpoint loader | Implemented |
 | Default generator | Baseline fallback unless `FLOORGEN_CHECKPOINT` is set |
-| Real MSD-trained checkpoint | Pending |
-| Real processed data and test-split output export | Pending |
+| Real MSD-trained checkpoint | AMD Transformer checkpoint available at `checkpoints/flow-transformer-amd-862d422.pt` |
+| Ranked post-processing | Implemented as documented test-time compute; not raw model quality |
+| FID/density/coverage report | Not run unless an offline report with those fields is present |
+| Real processed data and test-split output export | Pipeline implemented; final judged export depends on organiser/test manifest |
 
 This is important to say plainly: the baseline is useful for testing the full
-pipeline, but the scored submission should use the trained flow checkpoint.
+pipeline, while the judged model demo should use the trained flow checkpoint and
+clearly distinguish raw sampler output from ranked/post-processed output.
 
 ## Quantitative Outcomes to Lead With
 

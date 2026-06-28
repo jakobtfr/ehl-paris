@@ -22,6 +22,7 @@ from shapely.geometry.base import BaseGeometry
 from .baseline import baseline_sample
 from .config import ROOM_NAMES, SEED
 from .data.outline import largest_shell
+from .postprocess import RankingConfig, rank_samples
 from .repr.mrr import RepairRejected, repair_partition
 from .seeding import seed_everything
 
@@ -52,6 +53,7 @@ def _generator_from_env() -> Callable[[BaseGeometry, np.random.Generator], list]
 GENERATOR: Callable[[BaseGeometry, np.random.Generator], list] = baseline_sample
 _ENV_GENERATOR_KEY: tuple[str, str, str, str] | None = None
 _ENV_GENERATOR: Callable[[BaseGeometry, np.random.Generator], list] | None = None
+LAST_RANKING_PROVENANCE: dict | None = None
 
 
 def _active_generator() -> Callable[[BaseGeometry, np.random.Generator], list]:
@@ -121,6 +123,7 @@ def sample_layouts(
     seed: int = SEED,
     n_samples: int = 1,
     mode: str = "raw",
+    candidate_budget: int | None = None,
 ) -> list[list[dict]]:
     """Sample one or more layouts for an outline.
 
@@ -135,8 +138,32 @@ def sample_layouts(
     if not isinstance(outline, Polygon) or outline.is_empty:
         raise ValueError("outline must be a non-empty Polygon or MultiPolygon")
 
+    normalized_mode = mode.lower().strip()
+    if normalized_mode not in {"raw", "ranked"}:
+        raise ValueError("mode must be 'raw' or 'ranked'")
+
     seed_everything(seed)
     rng = np.random.default_rng(seed)
+    n_samples = max(1, n_samples)
+
+    global LAST_RANKING_PROVENANCE
+    if normalized_mode == "ranked":
+        budget = candidate_budget
+        if budget is None:
+            budget = int(os.environ.get("FLOORGEN_CANDIDATE_BUDGET", max(16, n_samples * 8)))
+        if budget <= 0:
+            raise ValueError("candidate_budget must be positive")
+        selection = rank_samples(
+            outline,
+            _active_generator(),
+            rng,
+            n_samples=n_samples,
+            config=RankingConfig(candidate_budget=budget),
+        )
+        LAST_RANKING_PROVENANCE = selection.provenance
+        return [_as_records(partition) for partition in selection.layouts]
+
+    LAST_RANKING_PROVENANCE = None
     samples = []
     for _ in range(n_samples):
         partition = []

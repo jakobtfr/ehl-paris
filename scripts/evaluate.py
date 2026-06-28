@@ -22,11 +22,12 @@ from shapely.geometry import box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+import floorgen.generate as generate_module
 from floorgen.config import SEED
 from floorgen.eval.metrics import distribution_metrics, validity_metrics
 from floorgen.eval.realism import try_image_distribution_report
 from floorgen.eval.render import RenderConfig, render_layout
-from floorgen.generate import backend_provenance, sample_layouts
+from floorgen.generate import backend_provenance
 
 
 def _demo_outlines(n: int = 5) -> dict:
@@ -95,6 +96,8 @@ def evaluate(
     device: str | None = None,
     real_metrics: bool = False,
     prdc_k: int = 5,
+    mode: str = "raw",
+    candidate_budget: int | None = None,
 ) -> dict:
     """Run full evaluation pipeline, return structured report."""
     if n_samples <= 0:
@@ -105,6 +108,7 @@ def evaluate(
     rendered_images = []
     real_images = []
     failures = []
+    ranking_runs = []
 
     t0 = time.time()
 
@@ -112,7 +116,32 @@ def evaluate(
         if real_metrics and real_layouts and unit_id in real_layouts:
             real_images.append(render_layout(real_layouts[unit_id], outline, cfg=cfg))
         try:
-            layouts = sample_layouts(outline, seed=seed, n_samples=n_samples)
+            layouts = generate_module.sample_layouts(
+                outline,
+                seed=seed,
+                n_samples=n_samples,
+                mode=mode,
+                candidate_budget=candidate_budget,
+            )
+            if mode == "ranked" and generate_module.LAST_RANKING_PROVENANCE:
+                ranking_runs.append({
+                    "unit_id": unit_id,
+                    "candidate_budget": generate_module.LAST_RANKING_PROVENANCE.get(
+                        "candidate_budget"
+                    ),
+                    "accepted_count": generate_module.LAST_RANKING_PROVENANCE.get(
+                        "accepted_count"
+                    ),
+                    "rejected_count": generate_module.LAST_RANKING_PROVENANCE.get(
+                        "rejected_count"
+                    ),
+                    "selected_indices": generate_module.LAST_RANKING_PROVENANCE.get(
+                        "selected_indices"
+                    ),
+                    "selected_signatures": generate_module.LAST_RANKING_PROVENANCE.get(
+                        "selected_signatures"
+                    ),
+                })
         except Exception as exc:
             failures.append({"unit_id": unit_id, "error": str(exc)})
             continue
@@ -174,6 +203,8 @@ def evaluate(
     report = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "seed": seed,
+        "mode": mode,
+        "candidate_budget": candidate_budget,
         "n_outlines": len(outlines),
         "n_samples_per_outline": n_samples,
         "n_layouts_generated": n_layouts,
@@ -198,6 +229,11 @@ def evaluate(
             for k, v in dist.items()
         },
         "image_metrics": image_metrics,
+        "ranking": {
+            "runs": ranking_runs,
+            "accepted_count": sum(int(run.get("accepted_count") or 0) for run in ranking_runs),
+            "rejected_count": sum(int(run.get("rejected_count") or 0) for run in ranking_runs),
+        } if ranking_runs else {},
         "failures": failures[:10],
     }
     return report
@@ -224,6 +260,8 @@ def main() -> None:
         help="Compute FID and PRDC against real layouts from --units",
     )
     parser.add_argument("--prdc-k", type=int, default=5, help="k for PRDC density/coverage")
+    parser.add_argument("--mode", choices=["raw", "ranked"], default="raw")
+    parser.add_argument("--candidate-budget", type=int, default=None)
     args = parser.parse_args()
 
     if not args.outlines and not args.units and not args.demo:
@@ -240,6 +278,8 @@ def main() -> None:
         parser.error("--limit must be non-negative")
     if args.prdc_k <= 0:
         parser.error("--prdc-k must be positive")
+    if args.candidate_budget is not None and args.candidate_budget <= 0:
+        parser.error("--candidate-budget must be positive")
 
     real_layouts = None
     if args.units:
@@ -267,7 +307,7 @@ def main() -> None:
         report_threshold = args.threshold
         report_device = args.device
 
-    print(f"Evaluating {len(outlines)} outlines x {args.n_samples} samples...")
+    print(f"Evaluating {len(outlines)} outlines x {args.n_samples} samples ({args.mode})...")
     report = evaluate(
         outlines,
         real_layouts=real_layouts,
@@ -281,6 +321,8 @@ def main() -> None:
         device=report_device,
         real_metrics=args.real_metrics,
         prdc_k=args.prdc_k,
+        mode=args.mode,
+        candidate_budget=args.candidate_budget,
     )
 
     print(f"\nResults ({report['elapsed_seconds']}s):")
