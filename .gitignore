@@ -43,7 +43,10 @@ coverage/
 /data/raw/
 /data/processed/
 /reports/
-/checkpoints/
+/checkpoints/**
+!/checkpoints/**/
+!/checkpoints/**/*[Aa][Mm][Dd]*.pt.parts/part-*
+!/checkpoints/**/*[Aa][Mm][Dd]*.pt.parts/SHA256SUMS
 /outputs/
 /runs/
 /wandb/

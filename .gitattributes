@@ -1,1 +1,14 @@
 *.pdf binary
+
+# Native model/checkpoint artifacts use Git LFS when remote quota is available.
+checkpoints/**/*.pt filter=lfs diff=lfs merge=lfs -text
+checkpoints/**/*.pth filter=lfs diff=lfs merge=lfs -text
+checkpoints/**/*.ckpt filter=lfs diff=lfs merge=lfs -text
+checkpoints/**/*.safetensors filter=lfs diff=lfs merge=lfs -text
+checkpoints/**/*.onnx filter=lfs diff=lfs merge=lfs -text
+checkpoints/**/*.bin filter=lfs diff=lfs merge=lfs -text
+checkpoints/**/*.gguf filter=lfs diff=lfs merge=lfs -text
+
+# The AMD checkpoint is committed as split binary chunks because GitHub LFS
+# quota is unavailable for this repo.
+checkpoints/**/*.pt.parts/part-* binary
