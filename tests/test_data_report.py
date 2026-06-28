@@ -101,6 +101,45 @@ def _run_official(tmp_path, monkeypatch):
     return rc, records, report
 
 
+def _run_kaggle_dir_floor_split(tmp_path, monkeypatch):
+    kaggle_dir = tmp_path / "kaggle"
+    csv = kaggle_dir / "mds_V2_5.372k.csv"
+    out = tmp_path / "processed"
+    reports = tmp_path / "reports"
+    kaggle_dir.mkdir()
+
+    rows = [
+        _row(_sq(0, 0), 101, 1001, 9001, "BEDROOM", "Bedroom"),
+        _row(_sq(3, 0), 101, 1001, 9001, "KITCHEN", "Kitchen"),
+        _row(_sq(10, 0), 102, 1002, 9002, "BEDROOM", "Bedroom"),
+        _row(_sq(13, 0), 102, 1002, 9002, "BATHROOM", "Bathroom"),
+        _row(_sq(20, 0), 201, 2001, 9901, "BEDROOM", "Bedroom"),
+        _row(_sq(23, 0), 201, 2001, 9901, "KITCHEN", "Kitchen"),
+    ]
+    pd.DataFrame(rows).to_csv(csv, index=False)
+    for split, floors in {"train": [9001, 9002], "test": [9901]}.items():
+        split_dir = kaggle_dir / "modified-swiss-dwellings-v2" / split / "full_out"
+        split_dir.mkdir(parents=True)
+        for floor in floors:
+            (split_dir / f"{floor}.npy").write_bytes(b"marker")
+
+    monkeypatch.setattr(sys, "argv", [
+        "preprocess",
+        "--kaggle-dir", str(kaggle_dir),
+        "--out", str(out),
+        "--reports", str(reports),
+        "--val-frac", "0.5",
+    ])
+    rc = main()
+    records = [
+        json.loads(line)
+        for line in (out / "units.jsonl").read_text().splitlines()
+        if line.strip()
+    ]
+    report = json.loads((reports / "preprocess_report.json").read_text())
+    return rc, records, report
+
+
 def test_main_succeeds_and_writes_outputs(tmp_path, monkeypatch):
     rc, out, _ = _run(tmp_path, monkeypatch)
     assert rc == 0
@@ -164,3 +203,17 @@ def test_official_train_test_mode_preserves_ids_and_test_split(tmp_path, monkeyp
     assert {by_unit[101]["split"], by_unit[102]["split"]} == {"train", "val"}
     assert report["split_counts"]["test"] == 1
     assert report["official_split_counts"] == {"train": 2, "test": 1}
+
+
+def test_kaggle_dir_mode_uses_floor_id_split_markers(tmp_path, monkeypatch):
+    rc, records, report = _run_kaggle_dir_floor_split(tmp_path, monkeypatch)
+
+    assert rc == 0
+    by_unit = {record["unit_id"]: record for record in records}
+    assert by_unit[201]["split"] == "test"
+    assert by_unit[201]["official_split"] == "test"
+    assert by_unit[201]["official_split_source"] == "kaggle_dir_floor_id"
+    assert {by_unit[101]["split"], by_unit[102]["split"]} == {"train", "val"}
+    assert report["split_counts"]["test"] == 1
+    assert report["official_split_counts"] == {"train": 2, "test": 1}
+    assert report["official_split_source_counts"] == {"kaggle_dir_floor_id": 3}

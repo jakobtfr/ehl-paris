@@ -12,6 +12,7 @@ pytest.importorskip("torch")
 
 import torch  # noqa: E402
 
+from floorgen.config import ROOM_NAMES  # noqa: E402
 from floorgen.model.network import RoomFlowModel  # noqa: E402
 from floorgen.posttrain import (  # noqa: E402
     checkpoint_sha256,
@@ -32,7 +33,7 @@ def write_checkpoint(path: Path) -> None:
                 "d_model": 16,
                 "boundary_points": 8,
             },
-            "label_names": ["Bedroom"],
+            "label_names": ROOM_NAMES,
             "train": {"steps": 1, "final_loss": 1.23},
         },
         path,

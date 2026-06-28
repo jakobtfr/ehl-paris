@@ -10,33 +10,43 @@ rendering for FID/PRDC scoring.
 
 ```bash
 # Install dependencies
-pip install -e ".[dev]"
+uv sync --extra dev --extra train
 
 # Run evaluation on demo outlines (no data needed)
-python scripts/evaluate.py --demo --n-samples 4
+uv run python scripts/evaluate.py --demo --n-samples 4
 
 # Run with trained model checkpoint
-set FLOORGEN_CHECKPOINT=path/to/checkpoint.pt
-python scripts/evaluate.py --demo --n-samples 4
+FLOORGEN_CHECKPOINT=checkpoints/flow-transformer-amd-862d422.pt \
+FLOORGEN_GENERATION_MODE=ranked \
+FLOORGEN_CANDIDATE_BUDGET=4 \
+uv run --extra train python scripts/evaluate.py --demo --n-samples 1 --mode ranked
 
 # Compute real-vs-generated FID/PRDC when processed units are available.
 # Requires torch/torchmetrics; if unavailable, the JSON report records the blocker.
-python scripts/evaluate.py \
+uv run --extra train python scripts/evaluate.py \
   --units data/processed/units.jsonl \
   --split test \
+  --limit 3 \
+  --checkpoint checkpoints/flow-transformer-amd-862d422.pt \
+  --device cpu --steps 4 --threshold 0.5 \
+  --mode ranked --candidate-budget 4 \
   --real-metrics \
-  --n-samples 4 \
-  --output reports/eval/test_real_metrics.json
+  --n-samples 1 \
+  --output reports/final_test_metrics_smoke.json
 
 # Batch export to Parquet
-python scripts/export_batch.py --demo --format parquet
+uv run python scripts/export_batch.py --demo --format parquet
 
 # Batch export generated layouts for processed units.
-python scripts/export_batch.py \
+uv run --extra train python scripts/export_batch.py \
   --units data/processed/units.jsonl \
   --split test \
-  --format parquet \
-  --output-dir reports/submission-layouts
+  --limit 3 \
+  --checkpoint checkpoints/flow-transformer-amd-862d422.pt \
+  --device cpu --steps 4 --threshold 0.5 \
+  --mode ranked --candidate-budget 4 \
+  --format csv \
+  --output-dir outputs/final_test_export
 ```
 
 ## Architecture
@@ -189,23 +199,25 @@ metric blockers rather than invented scores.
 | `FLOORGEN_DEVICE` | `cpu` | Torch device (`cpu` or `cuda`) |
 | `FLOORGEN_SAMPLE_STEPS` | `32` | Euler integration steps |
 | `FLOORGEN_PRESENCE_THRESHOLD` | `0.5` | Room presence probability cutoff |
+| `FLOORGEN_GENERATION_MODE` | `raw` | `raw` or `ranked` for `generate(outline)` |
+| `FLOORGEN_CANDIDATE_BUDGET` | `16` | Candidate pool size for ranked mode |
 
 ## Running Tests
 
 ```bash
 # All eval/export tests
-python -m pytest tests/test_eval.py tests/test_export.py tests/test_eval_integration.py tests/test_eval_scoring.py -q
+uv run pytest tests/test_eval.py tests/test_export.py tests/test_eval_integration.py tests/test_eval_scoring.py -q
 
 # Full suite
-python -m pytest tests/ -q
+uv run pytest tests/ -q
 
 # Lint
-python -m ruff check src/floorgen/eval tests
+uv run ruff check src/floorgen/eval tests
 ```
 
 ## Current Results (Baseline)
 
-```
+```text
 Outlines: 5 (demo rectangular)
 Samples: 4 per outline
 Total layouts: 20
@@ -224,10 +236,38 @@ Distribution:
   labels used: 8/10
 ```
 
+## Current Results (Official Test Smoke)
+
+Command source: `reports/final_test_metrics_smoke.json`.
+
+```text
+Split: test
+Outlines: 3 official test units
+Checkpoint: checkpoints/flow-transformer-amd-862d422.pt
+Mode: ranked
+Candidate budget: 4
+Samples: 1 per outline
+Failures: 0
+
+Validity:
+  outside_frac_mean: 0.0000
+  overlap_frac_mean: 0.0000
+  gap_frac_mean:     0.0037
+  invalid_rate_mean: 0.0000
+  perfect_partitions: 3/3
+
+Image metrics:
+  FID:      257.3317565917969
+  Density:  0.0
+  Coverage: 0.0
+```
+
 ## Known Limitations
 
 - FID/PRDC require `torch` + `torchmetrics` (lazy import, fails gracefully)
-- No real MSD-trained checkpoint is present in this checkout; checkpoint-backed
-  metrics require a local `.pt` artifact.
+- Raw checkpoint samples often produce overlapping rooms rejected by the strict repair layer
+- Raw checkpoint type logits currently collapse toward `Balcony`; ranked mode records semantic calibration when it applies
+- The real MSD checkpoint and processed data are ignored local artifacts; see
+  `docs/artifact-manifest.md` for hashes and regeneration commands
 - Demo outlines are simple rectangles; real MSD outlines have complex shapes
-- Render palette is approximate; swap to exact organiser values when confirmed
+- Exact organiser wrapper details around graph overlays remain unverified

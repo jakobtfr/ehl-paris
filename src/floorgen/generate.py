@@ -80,6 +80,8 @@ def _active_generator() -> Callable[[BaseGeometry, np.random.Generator], list]:
 def backend_provenance() -> dict[str, str | None]:
     """Describe the currently configured generation backend for reports/demos."""
 
+    mode = os.environ.get("FLOORGEN_GENERATION_MODE", "raw")
+    candidate_budget = os.environ.get("FLOORGEN_CANDIDATE_BUDGET")
     if GENERATOR is not baseline_sample:
         return {
             "backend": "custom-generator",
@@ -87,6 +89,8 @@ def backend_provenance() -> dict[str, str | None]:
             "device": None,
             "steps": None,
             "presence_threshold": None,
+            "generation_mode": mode,
+            "candidate_budget": candidate_budget,
         }
     checkpoint = os.environ.get("FLOORGEN_CHECKPOINT")
     if checkpoint:
@@ -96,6 +100,8 @@ def backend_provenance() -> dict[str, str | None]:
             "device": os.environ.get("FLOORGEN_DEVICE", "cpu"),
             "steps": os.environ.get("FLOORGEN_SAMPLE_STEPS", "32"),
             "presence_threshold": os.environ.get("FLOORGEN_PRESENCE_THRESHOLD", "0.5"),
+            "generation_mode": mode,
+            "candidate_budget": candidate_budget,
         }
     return {
         "backend": "baseline",
@@ -103,7 +109,16 @@ def backend_provenance() -> dict[str, str | None]:
         "device": None,
         "steps": None,
         "presence_threshold": None,
+        "generation_mode": mode,
+        "candidate_budget": candidate_budget,
     }
+
+
+def _generation_mode_from_env() -> str:
+    mode = os.environ.get("FLOORGEN_GENERATION_MODE", "raw").lower().strip()
+    if mode not in {"raw", "ranked"}:
+        raise ValueError("FLOORGEN_GENERATION_MODE must be 'raw' or 'ranked'")
+    return mode
 
 
 def _as_records(partition: list[tuple[Polygon, int]]) -> list[dict]:
@@ -190,4 +205,4 @@ def generate(outline: BaseGeometry) -> list[dict]:
 
     Returns the room records for a single deterministic default-seed layout.
     """
-    return sample_layouts(outline, seed=SEED, n_samples=1, mode="raw")[0]
+    return sample_layouts(outline, seed=SEED, n_samples=1, mode=_generation_mode_from_env())[0]

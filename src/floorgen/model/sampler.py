@@ -122,6 +122,12 @@ def load_generator(
     checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     config = checkpoint.get("config", {})
     architecture = config.get("architecture", "mlp")
+    checkpoint_labels = tuple(checkpoint.get("label_names") or ROOM_NAMES)
+    if checkpoint_labels != ROOM_NAMES:
+        raise ValueError(
+            "checkpoint label_names do not match floorgen.config.ROOM_NAMES: "
+            f"{checkpoint_labels!r} != {ROOM_NAMES!r}"
+        )
 
     if architecture == "transformer":
         model = RoomFlowTransformer(

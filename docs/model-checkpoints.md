@@ -74,7 +74,7 @@ we would pitch as the final challenge approach.
 ## Architecture Summary
 
 The current trainable model is `RoomFlowModel`, backed by
-`TransformerRoomFlowModel` in `src/floorgen/model/network.py`.
+`RoomFlowTransformer` in `src/floorgen/model/network.py`.
 
 The model consumes:
 
@@ -150,9 +150,27 @@ demo presets wrote `reports/ranked_amd_representative.json`.
 | Ranked/post-processed | `flow-transformer-amd-862d422.pt` | 4 | 2 | 8 | 8/8 succeeded; outside mean 0.0, overlap mean 0.000051, gap mean 0.000286, invalid rate 0.0, mean 8.5 rooms |
 
 This is a post-processing improvement over the raw checkpoint, not evidence
-that the raw Transformer sampler is strict-valid. The label mix remains skewed
-toward bedrooms/living rooms in this run, so semantic calibration is still a
-known limitation.
+that the raw Transformer sampler is strict-valid. A follow-up audit found that
+the AMD checkpoint's raw type logits collapse to `Balcony` on representative
+test probes even though checkpoint `label_names` matches `ROOM_NAMES`. The
+loader now rejects mismatched checkpoint label taxonomies, and ranked mode
+records an explicit `semantic_repair` provenance entry when it applies an
+area-ordered MSD semantic prior to collapsed candidates.
+
+Verified one-argument ranked checkpoint probe:
+
+```bash
+FLOORGEN_CHECKPOINT=checkpoints/flow-transformer-amd-862d422.pt \
+FLOORGEN_DEVICE=cpu \
+FLOORGEN_SAMPLE_STEPS=4 \
+FLOORGEN_PRESENCE_THRESHOLD=0.5 \
+FLOORGEN_GENERATION_MODE=ranked \
+FLOORGEN_CANDIDATE_BUDGET=4 \
+uv run --extra train python -B -c "from shapely.geometry import box; import floorgen.generate as g; layout = g.generate(box(0,0,10,8)); print(len(layout), sorted({r['label'] for r in layout}), g.LAST_RANKING_PROVENANCE.get('semantic_repair_count'))"
+```
+
+Observed output: 7 rooms, labels `Bathroom`, `Bedroom`, `Corridor`, `Kitchen`,
+`Livingroom`, and `semantic_repair_count=4`.
 
 ## Judge FAQ
 

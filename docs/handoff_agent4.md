@@ -69,15 +69,18 @@ python -m ruff check src/floorgen/eval tests scripts/evaluate.py scripts/export_
 
 - Render size: 512×512 px (MSD default from `plot.py`)
 - DPI: 100, no axes, equal aspect ratio
-- Colour palette: approximates MSD CMAP_ROOMTYPE (10 room types)
+- Colour palette: centralized MSD-style 10-room mapping in `RenderConfig`
 - Background: white (255, 255, 255)
 - Edge: 1px black borders between rooms
-- All configurable via `RenderConfig` dataclass — swap to exact organiser values once confirmed
+- All configurable via `RenderConfig` dataclass; exact organiser wrapper details
+  such as graph overlays remain an open parity question
 
 ## Blockers
 
-None currently. All code runs without torch/GPU for basic evaluation.
-FID/PRDC computation requires `torch` + `torchmetrics` but fails gracefully with ImportError.
+Current blockers are packaging and final-scale artifacts, not the smoke path.
+FID/PRDC computation requires `torch` + `torchmetrics` but now runs on the
+3-unit official test smoke; full-scale metrics/export still need the ignored
+local artifacts or an external artifact handoff.
 
 ## Shared-File Requests
 

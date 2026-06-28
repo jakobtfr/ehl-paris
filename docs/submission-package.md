@@ -49,6 +49,8 @@ Key files:
 - `scripts/evaluate.py` — generated validity report and optional real-vs-
   generated FID/PRDC report.
 - `src/floorgen/demo/app.py` — Gradio demo with backend provenance.
+- `docs/artifact-manifest.md` — local artifact hashes, ignored-file status, and
+  regeneration commands.
 
 ## Challenge Alignment
 
@@ -59,7 +61,7 @@ Key files:
 | Diffusion/flow model, not pure solver | Flow model path and checkpoint loader exist; baseline is documented as fallback only. |
 | Preserve outline and containment | Repair and validity metrics check outside, overlap, gap, invalid rate. |
 | FID/density/coverage | Real-vs-generated rendered image metric path is implemented; blocked status is reported when dependencies/data are missing. |
-| Kaggle split integrity | Preprocessing accepts explicit train/test CSVs and derives val only from official train. |
+| Kaggle split integrity | Preprocessing accepts explicit train/test CSVs or Kaggle floor-id marker folders, keeps test as `split="test"`, and derives val only from official train. |
 | Process history | `origin/entire/checkpoints/v1` exists. |
 
 ## Verification Commands
@@ -72,22 +74,36 @@ uv run python scripts/evaluate.py --demo --n-samples 2
 uv run python scripts/export_batch.py --demo --format csv --output-dir /tmp/floorgen-export-smoke
 ```
 
-When processed MSD units are available:
+When processed MSD units and the AMD checkpoint are available locally:
 
 ```bash
 uv run --extra train python scripts/evaluate.py \
   --units data/processed/units.jsonl \
   --split test \
+  --limit 3 \
+  --checkpoint checkpoints/flow-transformer-amd-862d422.pt \
+  --device cpu \
+  --steps 4 \
+  --threshold 0.5 \
+  --mode ranked \
+  --candidate-budget 4 \
+  --n-samples 1 \
   --real-metrics \
-  --n-samples 4 \
-  --output reports/eval/test_real_metrics.json
+  --output reports/final_test_metrics_smoke.json
 
 uv run --extra train python scripts/export_batch.py \
   --units data/processed/units.jsonl \
   --split test \
-  --checkpoint checkpoints/flow.pt \
-  --format parquet \
-  --output-dir reports/submission-layouts
+  --limit 3 \
+  --checkpoint checkpoints/flow-transformer-amd-862d422.pt \
+  --device cpu \
+  --steps 4 \
+  --threshold 0.5 \
+  --mode ranked \
+  --candidate-budget 4 \
+  --n-samples 1 \
+  --format csv \
+  --output-dir outputs/final_test_export
 ```
 
 ## Current Artifact Status
@@ -95,22 +111,27 @@ uv run --extra train python scripts/export_batch.py \
 | Artifact | Status |
 | --- | --- |
 | Code path for trained flow/transformer generation | Implemented. |
-| Local real MSD-trained checkpoint in this checkout | Not present. |
-| Real processed `data/processed/units.jsonl` in this checkout | Not present. |
-| Generated test-split export in this checkout | Not present. |
-| Real FID/density/coverage values | Not reported without real units and heavy metric deps. |
-| Demo | Implemented; shows baseline vs checkpoint provenance. |
-| Pitch deck file | Not present; use this package and `docs/pitch-plan.md` as deck source. |
+| Primary MSD-trained checkpoint | Present locally at `checkpoints/flow-transformer-amd-862d422.pt`, ignored by git, SHA256 in `docs/artifact-manifest.md`. |
+| Processed official split units | Present locally at `data/processed/units.jsonl`, ignored by git; split counts are train=13,499, val=2,418, test=2,734. |
+| Generated test-split export | Limited 3-unit official test smoke exists locally under `outputs/final_test_export`; full 2,734-unit export has not been run. |
+| Real FID/density/coverage values | 3-unit smoke reported FID `257.3317565917969`, density `0.0`, coverage `0.0`; this is a smoke, not a final leaderboard-quality estimate. |
+| Demo | Local Gradio demo implemented; no live deployment URL is committed. |
+| Pitch deck file | Markdown deck source exists at `docs/pitch-deck.md`; no rendered PDF/PPTX is committed. |
 
 ## Limitations To State Clearly
 
 - The baseline backend is only for smoke testing and demo continuity. It is not
   the official scored generator unless explicitly submitted as an emergency
   fallback.
+- The AMD checkpoint's raw type logits currently collapse toward `Balcony`.
+  Ranked mode records an explicit semantic-calibration fallback when collapsed
+  labels are detected, so generated geometry remains checkpoint-derived while
+  semantic repair is auditable.
 - MRRs cannot exactly reconstruct every irregular MSD room; the oracle gate is
   included to quantify this representation loss.
-- The renderer approximates MSD `plot.py` settings. Size, edges, and palette are
-  centralized in `RenderConfig` so exact organizer settings can be swapped in.
+- The renderer uses the centralized MSD-style room palette documented in
+  `src/floorgen/eval/render.py`; exact organiser wrapper details such as graph
+  overlays remain outside this repository.
 - Real metrics are only meaningful when real processed layouts and generated
   layouts are rendered through the same config.
 

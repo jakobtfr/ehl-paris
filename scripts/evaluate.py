@@ -141,6 +141,12 @@ def evaluate(
                     "selected_signatures": generate_module.LAST_RANKING_PROVENANCE.get(
                         "selected_signatures"
                     ),
+                    "semantic_repair_count": generate_module.LAST_RANKING_PROVENANCE.get(
+                        "semantic_repair_count"
+                    ),
+                    "selected_semantic_repairs": generate_module.LAST_RANKING_PROVENANCE.get(
+                        "selected_semantic_repairs"
+                    ),
                 })
         except Exception as exc:
             failures.append({"unit_id": unit_id, "error": str(exc)})
@@ -233,6 +239,9 @@ def evaluate(
             "runs": ranking_runs,
             "accepted_count": sum(int(run.get("accepted_count") or 0) for run in ranking_runs),
             "rejected_count": sum(int(run.get("rejected_count") or 0) for run in ranking_runs),
+            "semantic_repair_count": sum(
+                int(run.get("semantic_repair_count") or 0) for run in ranking_runs
+            ),
         } if ranking_runs else {},
         "failures": failures[:10],
     }

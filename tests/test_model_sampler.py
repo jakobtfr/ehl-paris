@@ -8,7 +8,7 @@ torch = pytest.importorskip("torch")
 
 from floorgen.config import ROOM_NAMES  # noqa: E402
 from floorgen.model.network import RoomFlowModel  # noqa: E402
-from floorgen.model.sampler import _select_present_slots, euler_sample  # noqa: E402
+from floorgen.model.sampler import _select_present_slots, euler_sample, load_generator  # noqa: E402
 
 
 def test_euler_sampler_shapes_and_decodes_mrrs() -> None:
@@ -42,3 +42,24 @@ def test_presence_selection_keeps_top_slot_when_threshold_rejects_all() -> None:
     present = _select_present_slots(probs, threshold=0.95)
 
     assert present.tolist() == [False, True, False]
+
+
+def test_load_generator_rejects_checkpoint_label_mismatch(tmp_path) -> None:
+    model = RoomFlowModel(k=4, d_model=16, boundary_points=8)
+    checkpoint = tmp_path / "bad-labels.pt"
+    torch.save(
+        {
+            "state_dict": model.state_dict(),
+            "config": {
+                "num_types": len(ROOM_NAMES),
+                "k": 4,
+                "d_model": 16,
+                "boundary_points": 8,
+            },
+            "label_names": ("Bedroom",),
+        },
+        checkpoint,
+    )
+
+    with pytest.raises(ValueError, match="checkpoint label_names do not match"):
+        load_generator(checkpoint)
