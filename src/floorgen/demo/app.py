@@ -23,9 +23,23 @@ from shapely.geometry.base import BaseGeometry  # noqa: E402
 
 from ..config import ROOM_NAMES, SEED  # noqa: E402
 from ..eval.render import ROOM_COLORS  # noqa: E402
-from ..generate import sample_layouts  # noqa: E402
+from ..generate import backend_provenance, sample_layouts  # noqa: E402
 
 PRESETS = json.loads((Path(__file__).parent / "presets.json").read_text())
+
+
+def _backend_status() -> str:
+    provenance = backend_provenance()
+    if provenance["backend"] == "flow-checkpoint":
+        return (
+            "**Backend:** flow checkpoint  \n"
+            f"`{provenance['checkpoint']}`  \n"
+            f"device `{provenance['device']}`, steps `{provenance['steps']}`, "
+            f"threshold `{provenance['presence_threshold']}`"
+        )
+    if provenance["backend"] == "custom-generator":
+        return "**Backend:** custom registered generator"
+    return "**Backend:** baseline heuristic fallback"
 
 
 def _draw(ax, layout, outline: BaseGeometry, title: str) -> None:
@@ -63,6 +77,7 @@ def generate_layouts(preset_name: str, custom_wkt: str, n_samples: int, seed: in
     # also return the first sample's polygons as GeoJSON text for inspection
     gj = {
         "type": "FeatureCollection",
+        "properties": {"backend": backend_provenance(), "seed": int(seed)},
         "features": [
             {"type": "Feature",
              "properties": {"label": r["label"]},
@@ -70,7 +85,7 @@ def generate_layouts(preset_name: str, custom_wkt: str, n_samples: int, seed: in
             for r in samples[0]
         ],
     }
-    return fig, json.dumps(gj, indent=2)
+    return fig, json.dumps(gj, indent=2), _backend_status()
 
 
 def build_demo() -> gr.Blocks:
@@ -93,6 +108,7 @@ def build_demo() -> gr.Blocks:
                 seed = gr.Number(value=SEED, label="Seed", precision=0)
                 go = gr.Button("Generate", variant="primary")
             with gr.Column(scale=2):
+                backend = gr.Markdown(_backend_status())
                 plot = gr.Plot(label="Layouts")
                 geojson = gr.Code(label="Sample 1 — room polygons (GeoJSON)", language="json")
         gr.Markdown(
@@ -100,8 +116,8 @@ def build_demo() -> gr.Blocks:
             "*Backend swaps to the trained flow-matching model automatically once "
             "registered — this UI does not change.*"
         )
-        go.click(generate_layouts, [preset, custom, n_samples, seed], [plot, geojson])
-        demo.load(generate_layouts, [preset, custom, n_samples, seed], [plot, geojson])
+        go.click(generate_layouts, [preset, custom, n_samples, seed], [plot, geojson, backend])
+        demo.load(generate_layouts, [preset, custom, n_samples, seed], [plot, geojson, backend])
     return demo
 
 

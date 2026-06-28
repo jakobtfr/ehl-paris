@@ -75,6 +75,35 @@ def _active_generator() -> Callable[[BaseGeometry, np.random.Generator], list]:
     return _ENV_GENERATOR or GENERATOR
 
 
+def backend_provenance() -> dict[str, str | None]:
+    """Describe the currently configured generation backend for reports/demos."""
+
+    if GENERATOR is not baseline_sample:
+        return {
+            "backend": "custom-generator",
+            "checkpoint": None,
+            "device": None,
+            "steps": None,
+            "presence_threshold": None,
+        }
+    checkpoint = os.environ.get("FLOORGEN_CHECKPOINT")
+    if checkpoint:
+        return {
+            "backend": "flow-checkpoint",
+            "checkpoint": checkpoint,
+            "device": os.environ.get("FLOORGEN_DEVICE", "cpu"),
+            "steps": os.environ.get("FLOORGEN_SAMPLE_STEPS", "32"),
+            "presence_threshold": os.environ.get("FLOORGEN_PRESENCE_THRESHOLD", "0.5"),
+        }
+    return {
+        "backend": "baseline",
+        "checkpoint": None,
+        "device": None,
+        "steps": None,
+        "presence_threshold": None,
+    }
+
+
 def _as_records(partition: list[tuple[Polygon, int]]) -> list[dict]:
     out = []
     for poly, label_idx in partition:

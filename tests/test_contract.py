@@ -7,7 +7,7 @@ from shapely.ops import unary_union
 
 from floorgen.baseline import baseline_sample
 from floorgen.config import ROOM_NAMES
-from floorgen.generate import generate, sample_layouts
+from floorgen.generate import backend_provenance, generate, sample_layouts
 from floorgen.repr.mrr import RepairRejected
 
 OUTLINE = Polygon([(0, 0), (10, 0), (10, 6), (6, 6), (6, 10), (0, 10)])
@@ -103,3 +103,16 @@ def test_empty_generator_rejects_after_retries(monkeypatch):
         assert "no repairable rooms" in str(exc)
     else:
         raise AssertionError("empty generator should be rejected")
+
+
+def test_backend_provenance_reports_checkpoint_env(monkeypatch):
+    monkeypatch.setenv("FLOORGEN_CHECKPOINT", "checkpoints/flow.pt")
+    monkeypatch.setenv("FLOORGEN_DEVICE", "cpu")
+    monkeypatch.setenv("FLOORGEN_SAMPLE_STEPS", "64")
+    monkeypatch.setenv("FLOORGEN_PRESENCE_THRESHOLD", "0.4")
+
+    provenance = backend_provenance()
+
+    assert provenance["backend"] == "flow-checkpoint"
+    assert provenance["checkpoint"] == "checkpoints/flow.pt"
+    assert provenance["steps"] == "64"

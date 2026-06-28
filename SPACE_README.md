@@ -16,9 +16,10 @@ hackathon ("Mirror Mirror on the Wall").
 Pick a real Swiss apartment outline or paste your own polygon WKT, then sample
 several diverse, valid room arrangements.
 
-**Current backend:** heuristic baseline (produces valid geometry; the trained
-flow-matching model upgrades this automatically once registered via the
-`GENERATOR` seam — no UI changes needed).
+**Backend provenance:** the app shows whether it is running the baseline
+fallback or a `FLOORGEN_CHECKPOINT` flow sampler, including checkpoint path,
+device, sampler steps, and presence threshold. The GeoJSON output also records
+the backend metadata for the displayed sample.
 
 **Deploy:** create a Gradio Space, push this repo. Spaces reads this file's
 front-matter; rename it to `README.md` in the Space (the repo's own README is
