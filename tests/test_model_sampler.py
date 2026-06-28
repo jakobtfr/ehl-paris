@@ -8,7 +8,7 @@ torch = pytest.importorskip("torch")
 
 from floorgen.config import ROOM_NAMES  # noqa: E402
 from floorgen.model.network import RoomFlowModel  # noqa: E402
-from floorgen.model.sampler import euler_sample  # noqa: E402
+from floorgen.model.sampler import _select_present_slots, euler_sample  # noqa: E402
 
 
 def test_euler_sampler_shapes_and_decodes_mrrs() -> None:
@@ -34,3 +34,11 @@ def test_euler_sampler_shapes_and_decodes_mrrs() -> None:
         assert np.isfinite([mrr.cx, mrr.cy, mrr.w, mrr.h, mrr.angle]).all()
         assert mrr.w > 0
         assert mrr.h > 0
+
+
+def test_presence_selection_keeps_top_slot_when_threshold_rejects_all() -> None:
+    probs = torch.tensor([0.10, 0.30, 0.20])
+
+    present = _select_present_slots(probs, threshold=0.95)
+
+    assert present.tolist() == [False, True, False]

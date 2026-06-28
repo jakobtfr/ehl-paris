@@ -5,8 +5,10 @@ from __future__ import annotations
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
+from floorgen.baseline import baseline_sample
 from floorgen.config import ROOM_NAMES
 from floorgen.generate import generate, sample_layouts
+from floorgen.repr.mrr import RepairRejected
 
 OUTLINE = Polygon([(0, 0), (10, 0), (10, 6), (6, 6), (6, 10), (0, 10)])
 TOL = 0.02
@@ -68,3 +70,36 @@ def test_geojson_roundtrips():
     for r in generate(OUTLINE):
         g = sg.shape(r["geojson"])
         assert g.is_valid and abs(g.area - r["polygon"].area) < 1e-6
+
+
+def test_empty_generator_attempt_is_retried(monkeypatch):
+    import floorgen.generate as generate_module
+
+    calls = 0
+
+    def empty_then_baseline(outline, rng):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return []
+        return baseline_sample(outline, rng)
+
+    monkeypatch.setattr(generate_module, "GENERATOR", empty_then_baseline)
+
+    layouts = sample_layouts(OUTLINE, seed=42, n_samples=1)
+
+    assert calls == 2
+    assert len(layouts[0]) > 0
+
+
+def test_empty_generator_rejects_after_retries(monkeypatch):
+    import floorgen.generate as generate_module
+
+    monkeypatch.setattr(generate_module, "GENERATOR", lambda _outline, _rng: [])
+
+    try:
+        sample_layouts(OUTLINE, seed=42, n_samples=1)
+    except RepairRejected as exc:
+        assert "no repairable rooms" in str(exc)
+    else:
+        raise AssertionError("empty generator should be rejected")

@@ -115,16 +115,25 @@ def test_run_post_training_rejects_invalid_threshold(tmp_path: Path) -> None:
         )
 
 
-def test_run_post_training_rejects_empty_generated_exports(tmp_path: Path) -> None:
+def test_run_post_training_rejects_empty_generated_exports(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     units = tmp_path / "units.jsonl"
     checkpoint = tmp_path / "flow.pt"
     write_jsonl(units, [make_record(1, "val")])
     write_checkpoint(checkpoint)
 
     import floorgen.generate as generate_module
+    import floorgen.posttrain as posttrain_module
 
     old_generator = generate_module.GENERATOR
     try:
+        monkeypatch.setattr(
+            posttrain_module,
+            "load_generator",
+            lambda *_args, **_kwargs: (lambda _outline, _rng: []),
+        )
         with pytest.raises(RuntimeError, match="generated no rooms"):
             run_post_training(
                 checkpoint_path=checkpoint,

@@ -114,6 +114,9 @@ def sample_layouts(
             mrrs = _active_generator()(outline, rng)
             try:
                 partition = repair_partition(mrrs, outline)
+                if not partition:
+                    last_error = RepairRejected("generator produced no repairable rooms")
+                    continue
                 break
             except RepairRejected as exc:
                 last_error = exc

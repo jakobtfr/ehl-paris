@@ -32,6 +32,28 @@ def _model_device(model: RoomFlowModel) -> torch.device:
         return torch.device("cpu")
 
 
+def _select_present_slots(presence_prob: torch.Tensor, threshold: float) -> torch.Tensor:
+    """Threshold presence logits, with a model-ranked non-empty fallback."""
+
+    if presence_prob.ndim != 1:
+        raise ValueError(f"presence_prob must have shape (K,), got {presence_prob.shape}")
+    present = presence_prob > threshold
+    if bool(present.any()):
+        return present
+
+    expected = int(
+        torch.clamp(
+            torch.round(presence_prob.sum()),
+            min=1,
+            max=presence_prob.numel(),
+        ).item()
+    )
+    keep = torch.topk(presence_prob, k=expected).indices
+    present = torch.zeros_like(presence_prob, dtype=torch.bool)
+    present[keep] = True
+    return present
+
+
 @torch.no_grad()
 def euler_sample(
     model: RoomFlowModel,
@@ -72,7 +94,7 @@ def euler_sample(
     last_output = model(x, final_t, outline_xy, scale, outline_mask)
     type_idx = last_output.type_logits.argmax(dim=-1)[0]
     presence_prob = last_output.presence_logits.sigmoid()[0]
-    present = presence_prob > threshold
+    present = _select_present_slots(presence_prob, threshold)
     mrrs = decode_mrr_slots(
         x[0].detach().cpu().numpy(),
         type_idx.detach().cpu().numpy(),
