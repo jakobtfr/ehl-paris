@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from floorgen.eval import realism
+from floorgen.eval.metrics import inception_features
 
 
 def test_image_distribution_report_threads_fid_and_prdc(monkeypatch) -> None:
@@ -48,3 +50,14 @@ def test_try_image_distribution_report_reports_dependency_blocker(monkeypatch) -
     assert report["status"] == "blocked"
     assert "torchmetrics missing" in report["error"]
     assert report["fid"] is None
+
+
+def test_inception_features_accepts_uint8_images_when_torch_available() -> None:
+    pytest.importorskip("torch")
+    pytest.importorskip("torchmetrics")
+
+    images = np.zeros((2, 32, 32, 3), dtype=np.uint8)
+
+    features = inception_features(images)
+
+    assert features.shape == (2, 2048)

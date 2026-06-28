@@ -284,3 +284,22 @@ class TestExportCSV:
         assert set(df["unit_id"]) == {101}
         assert set(df["plan_id"]) == {201}
         assert set(df["official_split"]) == {"test"}
+
+    def test_export_batch_rejects_non_positive_sample_count(self, tmp_path):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "scripts/export_batch.py",
+                "--demo",
+                "--n-samples",
+                "0",
+                "--output-dir",
+                str(tmp_path / "export"),
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode != 0
+        assert "--n-samples must be positive" in result.stderr

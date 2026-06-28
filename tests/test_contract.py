@@ -65,6 +65,15 @@ def test_multisample_distinct_but_deterministic():
     assert len(set(labels)) > 1 or len(set(sizes)) > 1
 
 
+def test_n_samples_must_be_positive():
+    try:
+        sample_layouts(OUTLINE, seed=42, n_samples=0)
+    except ValueError as exc:
+        assert "n_samples must be positive" in str(exc)
+    else:
+        raise AssertionError("n_samples=0 should be rejected")
+
+
 def test_geojson_roundtrips():
     import shapely.geometry as sg
     for r in generate(OUTLINE):

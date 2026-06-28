@@ -116,7 +116,7 @@ uv run --extra train python scripts/export_batch.py \
 
 ## Suggested Demo Script
 
-1. Open the Gradio app with `uv run python app.py`.
+1. Open the Gradio app with `uv run --extra demo python app.py`.
 2. Show the backend provenance line. If no checkpoint is loaded, say it is the
    baseline fallback.
 3. Generate three samples for a preset outline and point to the unchanged

@@ -131,6 +131,9 @@ uv sync --extra dev
 
 # Full (adds torch / torchmetrics for FID + training — GPU box)
 uv sync --extra train
+
+# Demo UI (adds Gradio)
+uv sync --extra demo
 ```
 
 ### Environment Variables
@@ -203,8 +206,8 @@ uv run --extra dev ruff check src tests
 # 8. Quick smoke test (no external data or gradio needed)
 uv run python scripts/smoke_test.py
 
-# 9. Launch Gradio demo (requires: pip install gradio)
-uv run python app.py
+# 9. Launch Gradio demo
+uv run --extra demo python app.py
 ```
 
 ---

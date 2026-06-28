@@ -23,6 +23,9 @@ train = [
     "torchmetrics>=1.3",
     "torch-fidelity>=0.3",
 ]
+demo = [
+    "gradio>=4.0",
+]
 dev = [
     "pytest>=8.0",
     "ruff>=0.5",

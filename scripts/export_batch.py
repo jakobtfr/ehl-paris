@@ -18,6 +18,7 @@ from shapely.geometry import box
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from floorgen.export import ExportConfig, export_to_csv, export_to_parquet
+from floorgen.generate import backend_provenance
 
 
 def _load_outlines(path: Path) -> dict:
@@ -69,6 +70,8 @@ def main() -> None:
         parser.error("Provide --outlines <path>, --units <units.jsonl>, or --demo")
     if sum(bool(value) for value in (args.outlines, args.units, args.demo)) > 1:
         parser.error("Provide only one of --outlines, --units, or --demo")
+    if args.n_samples <= 0:
+        parser.error("--n-samples must be positive")
     if args.limit < 0:
         parser.error("--limit must be non-negative")
     if args.steps <= 0:
@@ -86,8 +89,9 @@ def main() -> None:
         )
     else:
         outlines = _demo_outlines() if args.demo else _load_outlines(args.outlines)
-    checkpoint = "baseline"
-    config_notes = ""
+    provenance = backend_provenance()
+    checkpoint = provenance["checkpoint"] or provenance["backend"] or "baseline"
+    config_notes = json.dumps({"backend": provenance}, sort_keys=True)
     if args.checkpoint is not None:
         from floorgen.posttrain import checkpoint_sha256, register_checkpoint_generator
 

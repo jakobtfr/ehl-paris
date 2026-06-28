@@ -26,7 +26,7 @@ from floorgen.config import SEED
 from floorgen.eval.metrics import distribution_metrics, validity_metrics
 from floorgen.eval.realism import try_image_distribution_report
 from floorgen.eval.render import RenderConfig, render_layout
-from floorgen.generate import sample_layouts
+from floorgen.generate import backend_provenance, sample_layouts
 
 
 def _demo_outlines(n: int = 5) -> dict:
@@ -90,13 +90,15 @@ def evaluate(
     render_size: int = 512,
     checkpoint: str = "baseline",
     checkpoint_sha: str | None = None,
-    steps: int | None = None,
-    threshold: float | None = None,
+    steps: int | str | None = None,
+    threshold: float | str | None = None,
     device: str | None = None,
     real_metrics: bool = False,
     prdc_k: int = 5,
 ) -> dict:
     """Run full evaluation pipeline, return structured report."""
+    if n_samples <= 0:
+        raise ValueError("n_samples must be positive")
     cfg = RenderConfig(size=render_size)
     all_validity = []
     all_layouts_tuples = []
@@ -228,6 +230,8 @@ def main() -> None:
         parser.error("Provide --outlines <path>, --units <units.jsonl>, or --demo")
     if args.real_metrics and not args.units:
         parser.error("--real-metrics requires --units")
+    if args.n_samples <= 0:
+        parser.error("--n-samples must be positive")
     if args.steps <= 0:
         parser.error("--steps must be positive")
     if not 0.0 <= args.threshold <= 1.0:
@@ -242,8 +246,12 @@ def main() -> None:
         outlines, real_layouts = _load_units(args.units, split=args.split, limit=args.limit)
     else:
         outlines = _demo_outlines() if args.demo else _load_outlines(args.outlines)
-    checkpoint = "baseline"
+    provenance = backend_provenance()
+    checkpoint = provenance["checkpoint"] or provenance["backend"] or "baseline"
     checkpoint_sha = None
+    report_steps: str | int | None = provenance["steps"]
+    report_threshold: str | float | None = provenance["presence_threshold"]
+    report_device: str | None = provenance["device"]
     if args.checkpoint is not None:
         from floorgen.posttrain import checkpoint_sha256, register_checkpoint_generator
 
@@ -255,6 +263,9 @@ def main() -> None:
         )
         checkpoint = str(args.checkpoint)
         checkpoint_sha = checkpoint_sha256(args.checkpoint)
+        report_steps = args.steps
+        report_threshold = args.threshold
+        report_device = args.device
 
     print(f"Evaluating {len(outlines)} outlines x {args.n_samples} samples...")
     report = evaluate(
@@ -265,9 +276,9 @@ def main() -> None:
         render_size=args.render_size,
         checkpoint=checkpoint,
         checkpoint_sha=checkpoint_sha,
-        steps=args.steps if args.checkpoint is not None else None,
-        threshold=args.threshold if args.checkpoint is not None else None,
-        device=args.device if args.checkpoint is not None else None,
+        steps=report_steps,
+        threshold=report_threshold,
+        device=report_device,
         real_metrics=args.real_metrics,
         prdc_k=args.prdc_k,
     )

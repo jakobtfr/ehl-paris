@@ -7,6 +7,7 @@ These tests verify the full workflow judges would run:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -167,6 +168,52 @@ class TestEvaluateCLI:
         report = json.loads(report_path.read_text())
         assert report["backend"]["checkpoint"] == "baseline"
         assert report["renderer"]["size"] == 512
+
+    def test_rejects_non_positive_sample_count(self):
+        result = subprocess.run(
+            [sys.executable, "scripts/evaluate.py", "--demo", "--n-samples", "0"],
+            cwd=Path(__file__).resolve().parents[1],
+            capture_output=True,
+            text=True,
+        )
+
+        assert result.returncode != 0
+        assert "--n-samples must be positive" in result.stderr
+
+    def test_env_checkpoint_is_reported_as_backend(self, tmp_path):
+        pytest.importorskip("torch")
+        from tests.test_posttrain import write_checkpoint
+
+        checkpoint = tmp_path / "flow.pt"
+        report_path = tmp_path / "eval.json"
+        write_checkpoint(checkpoint)
+        env = {
+            **os.environ,
+            "FLOORGEN_CHECKPOINT": str(checkpoint),
+            "FLOORGEN_SAMPLE_STEPS": "1",
+            "FLOORGEN_PRESENCE_THRESHOLD": "0.5",
+        }
+
+        subprocess.run(
+            [
+                sys.executable,
+                "scripts/evaluate.py",
+                "--demo",
+                "--n-samples",
+                "1",
+                "--output",
+                str(report_path),
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        report = json.loads(report_path.read_text())
+        assert report["backend"]["checkpoint"] == str(checkpoint)
+        assert report["backend"]["sampler_steps"] == "1"
 
     def test_evaluate_real_metrics_uses_real_layouts(self, rect_outline, monkeypatch):
         import scripts.evaluate as evaluate_script

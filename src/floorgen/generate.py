@@ -128,6 +128,8 @@ def sample_layouts(
     records with label, polygon, and geojson. Deterministic for a fixed seed;
     successive draws within a call differ (coverage-preserving).
     """
+    if n_samples <= 0:
+        raise ValueError("n_samples must be positive")
     if isinstance(outline, MultiPolygon):
         outline = largest_shell(outline)
     if not isinstance(outline, Polygon) or outline.is_empty:
@@ -136,7 +138,7 @@ def sample_layouts(
     seed_everything(seed)
     rng = np.random.default_rng(seed)
     samples = []
-    for _ in range(max(1, n_samples)):
+    for _ in range(n_samples):
         partition = []
         last_error: RepairRejected | None = None
         for _attempt in range(8):

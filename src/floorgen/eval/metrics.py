@@ -84,7 +84,7 @@ def inception_features(images: np.ndarray) -> np.ndarray:
 
     fid = FrechetInceptionDistance(feature=2048, normalize=True)
     inc = fid.inception
-    x = torch.from_numpy(images).permute(0, 3, 1, 2).float() / 255.0
+    x = torch.from_numpy(images.astype(np.uint8, copy=False)).permute(0, 3, 1, 2)
     feats = []
     with torch.no_grad():
         for i in range(0, len(x), 32):

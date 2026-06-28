@@ -100,6 +100,8 @@ def export_layouts(
     """
     if cfg is None:
         cfg = ExportConfig()
+    if cfg.n_samples <= 0:
+        raise ValueError("n_samples must be positive")
 
     rows: list[dict[str, Any]] = []
     failures: list[tuple[str, str]] = []
