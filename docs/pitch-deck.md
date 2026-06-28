@@ -135,10 +135,10 @@ The repair layer only enforces the hard geometry contract.
 | Evaluation (FID, PRDC, validity) | Done | `src/floorgen/eval/` |
 | Checkpoint loader + sampler | Done | `src/floorgen/model/sampler.py` |
 | Post-train pipeline | Done | `src/floorgen/posttrain.py` |
-| Gradio demo (live) | Done | `app.py` + HuggingFace Spaces |
+| Gradio demo (local / Space-ready) | Done | `app.py`; no live URL committed |
 | Batch export (Parquet/CSV) | Done | `scripts/export_batch.py` |
 
-**55+ automated tests. Linter clean. One-command smoke test.**
+**Automated tests. Linter clean. One-command smoke test.**
 
 ---
 
@@ -159,12 +159,12 @@ pytest:  55 tests passed, 1 skipped
 ruff:    All checks passed
 ```
 
-Every generated layout is a valid partition of the input outline.
-Zero rooms outside. Zero overlaps. Zero gaps.
+Verified smoke layouts are valid partitions of the input outline.
+The evaluator reports outside, overlap, gap, and invalid-rate metrics.
 
 ---
 
-## Slide 9: Live Demo
+## Slide 9: Local Demo
 
 1. Pick a **real MSD apartment outline** (5 presets from actual Swiss buildings)
 2. Generate **3-6 diverse layouts** from the same outline

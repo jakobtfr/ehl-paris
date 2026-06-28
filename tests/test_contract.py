@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, box
 from shapely.ops import unary_union
 
 from floorgen.baseline import baseline_sample
-from floorgen.config import ROOM_NAMES
+from floorgen.config import ROOM_NAME_TO_IDX, ROOM_NAMES
 from floorgen.generate import backend_provenance, generate, sample_layouts
 from floorgen.repr.mrr import RepairRejected
 
@@ -119,9 +119,56 @@ def test_backend_provenance_reports_checkpoint_env(monkeypatch):
     monkeypatch.setenv("FLOORGEN_DEVICE", "cpu")
     monkeypatch.setenv("FLOORGEN_SAMPLE_STEPS", "64")
     monkeypatch.setenv("FLOORGEN_PRESENCE_THRESHOLD", "0.4")
+    monkeypatch.setenv("FLOORGEN_GENERATION_MODE", "ranked")
+    monkeypatch.setenv("FLOORGEN_CANDIDATE_BUDGET", "4")
 
     provenance = backend_provenance()
 
     assert provenance["backend"] == "flow-checkpoint"
     assert provenance["checkpoint"] == "checkpoints/flow.pt"
     assert provenance["steps"] == "64"
+    assert provenance["generation_mode"] == "ranked"
+    assert provenance["candidate_budget"] == "4"
+
+
+def test_generate_can_use_ranked_env_mode(monkeypatch):
+    import floorgen.generate as generate_module
+    from floorgen.repr.mrr import RoomMRR
+
+    outline = box(0, 0, 12, 8)
+    balcony = ROOM_NAME_TO_IDX["Balcony"]
+
+    def collapsed_generator(_outline, _rng):
+        minx, miny, maxx, maxy = outline.bounds
+        step = (maxx - minx) / 8
+        return [
+            RoomMRR(
+                cx=minx + step * (i + 0.5),
+                cy=(miny + maxy) / 2,
+                w=step,
+                h=maxy - miny,
+                angle=0.0,
+                label_idx=balcony,
+            )
+            for i in range(8)
+        ]
+
+    monkeypatch.setattr(generate_module, "GENERATOR", collapsed_generator)
+    monkeypatch.setenv("FLOORGEN_GENERATION_MODE", "ranked")
+    monkeypatch.setenv("FLOORGEN_CANDIDATE_BUDGET", "1")
+
+    layout = generate_module.generate(outline)
+
+    assert len({room["label"] for room in layout}) >= 4
+    assert generate_module.LAST_RANKING_PROVENANCE["semantic_repair_count"] == 1
+
+
+def test_generate_rejects_invalid_env_mode(monkeypatch):
+    monkeypatch.setenv("FLOORGEN_GENERATION_MODE", "best")
+
+    try:
+        generate(OUTLINE)
+    except ValueError as exc:
+        assert "FLOORGEN_GENERATION_MODE" in str(exc)
+    else:
+        raise AssertionError("invalid generation mode should be rejected")

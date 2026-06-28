@@ -35,23 +35,47 @@ rasterize like real floor plans *and* leave enough shape decisions to the model
 to stay clear of the rule-based-partitioner line. Expect Voronoi/power cells to
 fail the gate (convex, diagonal cells unlike real plans); do not start there.
 
+## Current Status Snapshot
+
+Updated: 2026-06-28.
+
+- Official Kaggle split preprocessing is implemented and locally regenerated
+  from the extracted archive's `train/full_out` and `test/full_out` floor-id
+  markers: train=13,499, val=2,418, test=2,734, plan leakage=[].
+- The primary checkpoint is `checkpoints/flow-transformer-amd-862d422.pt`
+  (SHA256 recorded in `docs/artifact-manifest.md`), but it is ignored by git and
+  has no external release URL yet.
+- Raw checkpoint samples remain poor: strict repair often rejects overlapping
+  slots, and raw type logits collapse to `Balcony`.
+- Ranked mode is the current judge path. It samples candidates, records repair
+  pressure, and applies an explicit semantic-calibration fallback only when
+  collapsed labels are detected.
+- A 3-unit official test metrics smoke is verified:
+  FID=257.3317565917969, density=0.0, coverage=0.0, failures=0.
+- A 3-unit official test export smoke exists locally under
+  `outputs/final_test_export`; the full 2,734-unit test export is not present.
+- Gradio is implemented for local demo/deployment, but no live URL is committed.
+- The pitch deck exists as Markdown (`docs/pitch-deck.md`), not rendered
+  PDF/PPTX.
+
 ## Product the Judges See
 
-- Primary scored artifact: the generated layouts for the held-out MSD split, in
-  the organiser-requested format. Do not assume the judges need to run training
-  during evaluation.
+- Primary metric artifact: the generated layouts for the predefined Kaggle MSD
+  test split, in the organiser-requested format. Do not assume the judges need
+  to run training during evaluation.
 - `generate(outline, seed=None, n_samples=1, mode="raw")` returns labelled room
   polygons in the original coordinate system.
 - The submitted checkpoint uses MRR room tokens unless the oracle reconstruction
   gate proves MRR is not viable, in which case the fallback must be documented
   with reconstruction evidence.
-- A compatibility wrapper exposes plain `generate(outline)` if the evaluator
-  requires the exact one-argument signature.
+- A compatibility wrapper exposes plain `generate(outline)` for reviewers or
+  downstream scripts that expect a one-argument signature.
 - A batch CLI exports all generations for a manifest of test outlines with the
   documented seed, candidate count, test-time compute strategy, and metadata
   tying each output to the model checkpoint/config used.
-- A live demo lets judges upload or select an outline, sample multiple plausible
-  layouts, and inspect vector polygons.
+- A local Gradio demo lets judges upload or select an outline, sample multiple
+  plausible layouts, and inspect vector polygons. Deployment is prepared but no
+  live URL is currently committed.
 - A pitch deck explains why the system is aligned with FID, density, coverage,
   vector-output constraints, and code-review criteria. It must explain the
   model architecture, room parameterisation, conditioning features, repair
@@ -77,7 +101,9 @@ def generate(outline, seed: int | None = None, n_samples: int = 1, mode: str = "
 
 If organisers require a strict `generate(outline)` function, provide a wrapper
 that calls this API with the documented default seed, `n_samples=1`, and
-`mode="raw"`, then returns the first sample in the evaluator-expected shape.
+the configured `FLOORGEN_GENERATION_MODE`, then returns the first sample in the
+evaluator-expected shape. Use `FLOORGEN_GENERATION_MODE=ranked` for the current
+checkpoint-backed judge path.
 
 Inputs:
 
@@ -128,10 +154,10 @@ Build a reproducible MSD preprocessing pipeline:
   run preprocessing without changing code.
 - Filter `entity_type == "area"`.
 - Treat one `unit_id` as one apartment/dwelling training example. Keep
-  `plan_id` and `floor_id` as metadata and split groups so validation/test
-  examples do not leak from the same floor/building context into training. The
+  `plan_id` and `floor_id` as metadata. Respect Kaggle's predefined train/test
+  split, then create validation only from the predefined training split. The
   challenge data-construction script uses `unit_id`; `plan_id` is broader than a
-  single apartment.
+  single apartment and should stay unchanged through outline-format conversion.
 - Repair invalid geometries with a logged, deterministic policy.
 - Canonicalise room labels into a small stable taxonomy, anchored on the actual
   label values present in the CSV for `entity_type == "area"` rows (inspect the
@@ -166,8 +192,9 @@ Build a reproducible MSD preprocessing pipeline:
   MRR/type/presence tokens, decode and repair against the model-space outline,
   inverse-transform repaired polygons into metric export space, then rasterize
   the exported vectors for evaluation.
-- Save train/validation splits by `unit_id`, grouped by `plan_id`/`floor_id`
-  where possible, with the split seed documented.
+- Save split manifests by `unit_id`, grouped by `plan_id`/`floor_id` where
+  possible. Preserve Kaggle's predefined test split exactly, and document only
+  the seed used to derive validation from train.
 
 Deliverables:
 
@@ -270,8 +297,8 @@ Why this is strong:
 - Rotated-rectangle geometry captures many real floor-plan rooms while staying
   easier to learn than full polygons.
 - Diversity comes from sampling the model, not from a partition heuristic.
-- The repair layer makes outputs robust under hidden evaluation without taking
-  over shape generation.
+- The repair layer makes outputs robust under self-reported metric evaluation
+  without taking over shape generation.
 
 Oracle reconstruction gate:
 
@@ -339,9 +366,12 @@ emergency demo fallback only, unless organisers explicitly approve otherwise.
 Build a local evaluator before model tuning. The organisers clarified the
 evaluation stack, so stop treating the metric path as unknown:
 
+- **Harness:** there is no organiser-provided evaluation harness. We must
+  self-evaluate on FID, density, and coverage and report the metric settings
+  clearly.
 - **Density and coverage:** use the calculations from
   `clovaai/generative-evaluation-prdc`, specifically `compute_prdc` semantics
-  over the same image features used for the judged raster set. Report density
+  over the same image features used for the reported raster set. Report density
   and coverage; precision/recall can be logged as diagnostics.
 - **FID:** use PyTorch/TorchMetrics native FID:
   `from torchmetrics.image.fid import FrechetInceptionDistance`.
@@ -367,6 +397,9 @@ MSD renderer implications:
 - Room type can affect rendered color when using the official room-type color
   map, so keep type prediction and type-to-color mapping aligned with MSD
   constants instead of treating labels as cosmetic.
+- The official MSD palette/room-type mapping has been confirmed as the correct
+  color association. Any sample-rendering palette should be treated as secondary
+  unless it matches the MSD repo mapping.
 - If the organisers' wrapper around `plot.py` strips graph edges/nodes or uses a
   polygon-only helper, match that exact wrapper in one config switch; the default
   should still be "official MSD renderer parity".
@@ -410,11 +443,12 @@ Evaluator outputs:
 - track distribution fit: room count, room type frequencies, area ratios,
   adjacency patterns, corridor presence
 
-Remaining assumption to verify with Davis AI: the exact wrapper command around
-MSD `plot.py` for converting vector layouts to metric images, especially
-whether graph nodes/edges are drawn. The metric implementations, output format,
-room-label impact, post-processing allowance, and sample-count flexibility are
-no longer open questions.
+Remaining assumption to verify for our self-report: the exact wrapper command
+around MSD `plot.py` for converting vector layouts to metric images, especially
+whether graph nodes/edges are drawn. The absence of an organiser harness, metric
+implementations, output format, room-label impact, post-processing allowance,
+sample-count flexibility, and Kaggle split contract are no longer open
+questions.
 
 ### 5. Sampling and Ranking
 
@@ -466,10 +500,10 @@ Repo layout and tooling:
 
 Submission deliverables (all required by the brief):
 
-- **Generated held-out split**: export the requested generation file(s) in the
-  MSD `geom`-compatible format, with seed, candidate count, ranking/filtering
-  method, checkpoint id, config hash, and renderer/evaluator version in sidecar
-  metadata.
+- **Generated test split**: export the requested generation file(s) for the
+  predefined Kaggle test split in the MSD `geom`-compatible format, with seed,
+  candidate count, ranking/filtering method, checkpoint id, config hash, and
+  renderer/evaluator version in sidecar metadata.
 - **Live demo URL**: pick the host now (Gradio on Hugging Face Spaces or
   Streamlit Community Cloud). Cache the model at startup; aim for seconds per
   sample; show several samples per outline. Build the deploy path early — Sunday
@@ -512,10 +546,11 @@ Stress-test these cases before the final submission:
 
 Track implementation with these milestones:
 
-- `data-pipeline`: extract/load the MSD CSV, filter `entity_type == "area"`, map
-  `entity_subtype` through MSD `ROOM_MAPPING`, group by `unit_id`, construct
-  outlines, normalise coordinates, and split by `plan_id` with the documented
-  seed.
+- `data-pipeline`: extract/load the MSD CSV, respect the Kaggle train/test
+  split, filter `entity_type == "area"`, map `entity_subtype` through MSD
+  `ROOM_MAPPING`, group by `unit_id`, preserve `plan_id`, construct outlines,
+  normalise coordinates, and split validation only from train with the
+  documented seed.
 - `repr-encode-decode`: implement MRR encode/decode, canonical angle handling,
   round-trip Shapely conversion, and reconstruction IoU reporting.
 - `validity-repair`: implement largest-first overlap repair, outline clipping,
@@ -611,8 +646,8 @@ clarity, and submission packaging.
 
 - Freeze the final documented generation config: seed, candidate count,
   post-processing, ranking, checkpoint, and renderer settings.
-- Export generated layouts for the held-out split with checkpoint/config
-  metadata and MSD-`geom`-compatible geometry.
+- Export generated layouts for the predefined Kaggle test split with
+  checkpoint/config metadata and MSD-`geom`-compatible geometry.
 - Export model weights if feasible; always export enough provenance to show how
   the submitted generations were obtained.
 - Produce representative generated layouts and diversity grids.
@@ -711,8 +746,8 @@ Ask these before implementation choices harden:
    config hash?
 3. What exact label names should be used in the generated file: raw MSD subtype,
    mapped MSD room type, or challenge-level room label?
-4. How are invalid samples handled by the hidden scorer after submission:
-   rejected, worst-scored, clipped, or partially penalized?
+4. For self-reporting, should invalid samples be rejected, worst-scored,
+   clipped, or partially penalized?
 
 ## Definition of Done
 
@@ -721,7 +756,8 @@ Ask these before implementation choices harden:
   heuristic solver.
 - Oracle reconstruction proves the vector representation can resemble real
   floor plans before model training.
-- Local evaluation report compares real, heuristic baseline, and flow model.
+- Local self-evaluation report compares real, heuristic baseline, and flow
+  model on the predefined Kaggle split.
 - Local metrics use TorchMetrics FID and PRDC density/coverage on MSD-rendered
   images.
 - Batch export produces the generated split in MSD-`geom`-compatible format with

@@ -103,6 +103,88 @@ def _find_split_csv(kaggle_dir: Path, split: str) -> Path:
     return matches[0]
 
 
+def _find_optional_split_csv(kaggle_dir: Path, split: str) -> Path | None:
+    try:
+        return _find_split_csv(kaggle_dir, split)
+    except FileNotFoundError:
+        return None
+
+
+def _find_geometry_csv(kaggle_dir: Path) -> Path:
+    """Find the single geometry CSV in an extracted Kaggle archive.
+
+    The public archive ships one large ``mds_*.csv`` with vector geometry and
+    split membership in sibling ``train``/``test`` folders, not necessarily as
+    separate train/test CSVs.
+    """
+    matches = [
+        p for p in kaggle_dir.rglob("*.csv")
+        if "train" not in p.stem.lower() and "test" not in p.stem.lower()
+    ]
+    if not matches:
+        raise FileNotFoundError(f"no geometry CSV found under {kaggle_dir}")
+    if len(matches) > 1:
+        formatted = ", ".join(str(p) for p in sorted(matches))
+        raise ValueError(f"multiple geometry CSV candidates under {kaggle_dir}: {formatted}")
+    return matches[0]
+
+
+def _split_marker_stems(kaggle_dir: Path, split: str) -> set[str]:
+    """Load floor-id stems from Kaggle split marker files.
+
+    The MSD archive repeats the same ids under ``struct_in``, ``graph_in``,
+    ``graph_out``, and ``full_out``. Prefer ``full_out`` so each floor appears
+    once, but fall back to all files below the split directory for robustness.
+    """
+    split_dir = kaggle_dir / "modified-swiss-dwellings-v2" / split
+    full_out = split_dir / "full_out"
+    search_dir = full_out if full_out.exists() else split_dir
+    if not search_dir.exists():
+        raise FileNotFoundError(f"no Kaggle {split!r} split marker directory at {search_dir}")
+    stems = {p.stem for p in search_dir.rglob("*") if p.is_file()}
+    if not stems:
+        raise FileNotFoundError(f"no Kaggle {split!r} split marker files under {search_dir}")
+    return stems
+
+
+def _load_kaggle_floor_splits(kaggle_dir: Path) -> dict[int, str]:
+    """Return ``floor_id -> official_split`` from Kaggle split folders."""
+    result: dict[int, str] = {}
+    for split in ("train", "test"):
+        for stem in _split_marker_stems(kaggle_dir, split):
+            try:
+                floor_id = int(stem)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Kaggle {split!r} marker file has non-integer floor id stem: {stem!r}"
+                ) from exc
+            previous = result.get(floor_id)
+            if previous is not None and previous != split:
+                raise ValueError(
+                    f"floor_id={floor_id} appears in both official {previous!r} and {split!r}"
+                )
+            result[floor_id] = split
+    return result
+
+
+def apply_official_split_by_floor_id(
+    records: list[dict],
+    floor_splits: dict[int, str],
+) -> None:
+    """Annotate records with official split membership from ``floor_id`` markers."""
+    missing = sorted({int(record["floor_id"]) for record in records} - set(floor_splits))
+    if missing:
+        preview = ", ".join(str(value) for value in missing[:10])
+        suffix = "..." if len(missing) > 10 else ""
+        raise ValueError(
+            f"{len(missing)} processed floor_id values are missing from Kaggle split markers: "
+            f"{preview}{suffix}"
+        )
+    for record in records:
+        record["official_split"] = floor_splits[int(record["floor_id"])]
+        record["official_split_source"] = "kaggle_dir_floor_id"
+
+
 def build_records(gdf: Any, limit_units: int = 0) -> tuple[list[dict], int, Counter]:
     """One record per unit_id: outline, rooms, transform, scale features, meta.
 
@@ -325,6 +407,9 @@ def write_outputs(records: list[dict], split: dict[int, str], out_dir: Path,
         "official_split_counts": dict(
             Counter(str(r.get("official_split", "derived")) for r in records)
         ),
+        "official_split_source_counts": dict(
+            Counter(str(r.get("official_split_source", "none")) for r in records)
+        ),
         "split_summary": split_summary(records, split),
         "room_count_distribution": room_count_distribution(records),
         "rooms_per_unit": {
@@ -379,9 +464,23 @@ def main() -> int:
     seed_everything(SEED)
     train_csv = args.train_csv
     test_csv = args.test_csv
+    floor_splits: dict[int, str] | None = None
     if args.kaggle_dir:
-        train_csv = train_csv or _find_split_csv(args.kaggle_dir, "train")
-        test_csv = test_csv or _find_split_csv(args.kaggle_dir, "test")
+        if train_csv is None and test_csv is None:
+            train_csv = _find_optional_split_csv(args.kaggle_dir, "train")
+            test_csv = _find_optional_split_csv(args.kaggle_dir, "test")
+            if train_csv is None and test_csv is None:
+                floor_splits = _load_kaggle_floor_splits(args.kaggle_dir)
+                if not args.csv.exists():
+                    args.csv = _find_geometry_csv(args.kaggle_dir)
+            elif bool(train_csv) != bool(test_csv):
+                raise ValueError(
+                    "Kaggle directory contains only one split CSV; provide both "
+                    "--train-csv and --test-csv, or use floor-id split folders with one CSV"
+                )
+        else:
+            train_csv = train_csv or _find_split_csv(args.kaggle_dir, "train")
+            test_csv = test_csv or _find_split_csv(args.kaggle_dir, "test")
 
     if bool(train_csv) != bool(test_csv):
         raise ValueError("pass both --train-csv and --test-csv, or neither")
@@ -400,6 +499,12 @@ def main() -> int:
         unmapped = train_unmapped + test_unmapped
         n_invalid_geom = train_invalid + test_invalid
         n_area_rows_no_unit = train_no_unit + test_no_unit
+        split = split_predefined_train_test(records, val_frac=args.val_frac, seed=SEED)
+    elif floor_splits is not None:
+        records, skipped, unmapped, n_invalid_geom, n_area_rows_no_unit = (
+            build_records_from_csv(args.csv, limit_units=args.limit_units)
+        )
+        apply_official_split_by_floor_id(records, floor_splits)
         split = split_predefined_train_test(records, val_frac=args.val_frac, seed=SEED)
     else:
         records, skipped, unmapped, n_invalid_geom, n_area_rows_no_unit = (

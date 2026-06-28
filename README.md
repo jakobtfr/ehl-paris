@@ -16,16 +16,16 @@ Dwellings).
 |---|---|---|
 | Input: apartment outline polygon | Done | `generate(outline)` accepts any Shapely `Polygon`/`MultiPolygon` |
 | Output: typed room polygons (vector) | Done | Returns `list[dict]` with `label`, `polygon`, `geojson` per room |
-| Diffusion/flow-matching model | Training path implemented | `src/floorgen/model/*` + `scripts/train_flow.py`; baseline fallback remains active until a checkpoint is registered |
+| Diffusion/flow-matching model | Training + checkpoint path implemented | `src/floorgen/model/*` + `scripts/train_flow.py`; checkpoint-backed ranked mode is the judged path |
 | MRR room representation (cx, cy, w, h, angle, type) | Done | `src/floorgen/repr/mrr.py` |
 | Deterministic validity-repair layer | Done | Clips to outline, resolves overlaps, fills slivers |
-| FID evaluation (TorchMetrics) | Implemented | `scripts/evaluate.py --units ... --real-metrics`; reports concrete blockers if deps/data are unavailable |
-| Density & Coverage (PRDC) | Implemented | `src/floorgen/eval/prdc.py` + rendered real-vs-generated image report |
+| FID evaluation (TorchMetrics) | Implemented + smoke verified | `reports/final_test_metrics_smoke.json` reports numeric FID on 3 official test units |
+| Density & Coverage (PRDC) | Implemented + smoke verified | `src/floorgen/eval/prdc.py`; smoke report has numeric density/coverage |
 | MSD-parity rasteriser | Done | `src/floorgen/eval/render.py` |
-| Data preprocessing pipeline | Done | `src/floorgen/data/preprocess.py` — CSV → per-unit records |
+| Data preprocessing pipeline | Done | `src/floorgen/data/preprocess.py` — CSV/Kaggle split folders → per-unit records |
 | Oracle reconstruction gate | Done | `src/floorgen/repr/oracle_gate.py` — MRR fidelity go/no-go |
 | Reproducibility (seed 42) | Done | Global seed in `config.py`, per-sample RNG |
-| Live demo | Done | Gradio app (`app.py` / HuggingFace Spaces) |
+| Local demo | Done | Gradio app (`app.py`); no deployed live URL is committed |
 | Process history (Entire) | Done | `entire/checkpoints/v1` branch |
 
 ---
@@ -145,13 +145,15 @@ See [`.env.example`](.env.example) for all variables.
 | `MSD_CSV_PATH` | Path to one Modified Swiss Dwellings CSV; dev fallback when official split files are not passed | For single-CSV preprocessing only |
 | `MSD_TRAIN_CSV_PATH` | Path to Kaggle's predefined train split CSV | For official-split preprocessing |
 | `MSD_TEST_CSV_PATH` | Path to Kaggle's predefined test split CSV | For official-split preprocessing |
-| `MSD_KAGGLE_DIR` | Directory containing one train CSV and one test CSV; auto-detected by filename | Alternative to explicit split paths |
+| `MSD_KAGGLE_DIR` | Extracted Kaggle directory; supports split CSVs or `train/full_out` + `test/full_out` floor-id markers | Alternative to explicit split paths |
 | `FLOORGEN_PROCESSED` | Output dir for preprocessed data (default: `data/processed`) | No |
 | `FLOORGEN_REPORTS` | Output dir for preprocessing reports (default: `reports`) | No |
 | `FLOORGEN_CHECKPOINT` | Optional checkpoint path auto-loaded by `floorgen.generate` | For trained generation |
 | `FLOORGEN_DEVICE` | Torch device for checkpoint generation (`cpu`, `cuda`) | No |
 | `FLOORGEN_SAMPLE_STEPS` | Euler steps for checkpoint sampler | No |
 | `FLOORGEN_PRESENCE_THRESHOLD` | Room-presence threshold for checkpoint sampler | No |
+| `FLOORGEN_GENERATION_MODE` | `raw` or `ranked` for the one-argument `generate(outline)` entry point | No |
+| `FLOORGEN_CANDIDATE_BUDGET` | Candidate pool size for ranked generation | No |
 
 ### Run
 
@@ -161,6 +163,11 @@ See [`.env.example`](.env.example) for all variables.
 uv run python -m floorgen.data.preprocess \
   --train-csv "$MSD_TRAIN_CSV_PATH" \
   --test-csv "$MSD_TEST_CSV_PATH" \
+  --out data/processed --reports reports
+
+# If the Kaggle archive has one geometry CSV plus split marker folders, use:
+uv run python -m floorgen.data.preprocess \
+  --kaggle-dir "$MSD_KAGGLE_DIR" \
   --out data/processed --reports reports
 
 # Development fallback for a single CSV: creates a local train/val split only.
@@ -191,12 +198,21 @@ uv run --extra train python scripts/post_train.py \
 uv run --extra train python scripts/evaluate.py \
   --units data/processed/units.jsonl \
   --split test \
+  --limit 3 \
+  --checkpoint checkpoints/flow-transformer-amd-862d422.pt \
+  --device cpu --steps 4 --threshold 0.5 \
+  --mode ranked --candidate-budget 4 \
   --real-metrics \
-  --n-samples 4 \
-  --output reports/eval/test_real_metrics.json
+  --n-samples 1 \
+  --output reports/final_test_metrics_smoke.json
 
-# 6. Use a trained checkpoint through generate()
-FLOORGEN_CHECKPOINT=checkpoints/flow-smoke.pt \
+# 6. Use a trained checkpoint through the canonical generate(outline) signature.
+FLOORGEN_CHECKPOINT=checkpoints/flow-transformer-amd-862d422.pt \
+FLOORGEN_DEVICE=cpu \
+FLOORGEN_SAMPLE_STEPS=4 \
+FLOORGEN_PRESENCE_THRESHOLD=0.5 \
+FLOORGEN_GENERATION_MODE=ranked \
+FLOORGEN_CANDIDATE_BUDGET=4 \
 uv run --extra train python -B -c "from shapely.geometry import box; from floorgen.generate import generate; print(len(generate(box(0,0,10,8))), 'rooms')"
 
 # 7. Tests + lint. Include --extra train to exercise model/post-training tests.
@@ -213,6 +229,7 @@ uv run --extra demo python app.py
 FLOORGEN_CHECKPOINT=checkpoints/flow-transformer-amd-862d422.pt \
 FLOORGEN_DEVICE=cpu \
 FLOORGEN_SAMPLE_STEPS=4 \
+FLOORGEN_GENERATION_MODE=ranked \
 FLOORGEN_CANDIDATE_BUDGET=4 \
 uv run --with gradio --extra train python app.py
 ```
@@ -254,12 +271,18 @@ missing-checkpoint, and checkpoint-load-error states explicitly.
   space-partitioning baseline (`baseline.py`). This satisfies the `generate()`
   contract and produces valid geometry, but does **not** constitute the scored
   diffusion/flow model unless replaced by a loaded checkpoint sampler.
-- **Checkpoint provenance is documented, but weights are not committed here.**
-  Training handoff docs reference `checkpoints/flow-transformer-amd-862d422.pt`
-  as the primary checkpoint path once artifacts are copied into `checkpoints/`.
-  Raw strict repair may reject checkpoint samples when generated slots overlap
-  too much. Ranked mode is documented test-time compute: it samples multiple
-  candidates, applies repair-aware scoring, and selects diverse valid layouts.
+- **AMD-trained checkpoint exists locally, but weights are not committed here.**
+  The primary checkpoint path is `checkpoints/flow-transformer-amd-862d422.pt`.
+  Raw strict repair still rejects many checkpoint samples because generated
+  slots overlap too much. Ranked mode is documented test-time compute: it
+  samples multiple candidates, applies repair-aware scoring, and selects
+  diverse valid layouts. See `docs/artifact-manifest.md` for the local hash and
+  artifact handoff status.
+- **Checkpoint room-type head collapses in raw samples.** Direct type logits
+  currently over-predict `Balcony`. Ranked mode records an explicit semantic
+  calibration fallback when a candidate has collapsed labels, preserving model
+  geometry while making the rendered semantic output usable. This is provenance,
+  not a claim that raw type prediction is solved.
 - **MRR compression.** Minimum rotated rectangles cannot perfectly represent
   L-shaped or irregular rooms. The oracle gate quantifies this; corner-sequence
   tokens are a documented stretch goal.
@@ -267,8 +290,9 @@ missing-checkpoint, and checkpoint-load-error states explicitly.
   installed. If dependencies, real processed units, or sample count are
   insufficient, `scripts/evaluate.py --real-metrics` writes an explicit
   `image_metrics.status = "blocked"` instead of fabricating scores.
-- **MSD CSV not included.** The dataset is ~370k rows and is sourced from
-  Kaggle. Point `MSD_CSV_PATH` to your local copy.
+- **Large artifacts are ignored.** The Kaggle archive, processed units,
+  checkpoints, reports, and exports are local ignored artifacts. See
+  `docs/artifact-manifest.md` for hashes, status, and regeneration commands.
 
 ---
 
@@ -290,8 +314,10 @@ floorgen.generate.GENERATOR = load_generator(
 ```
 
 The repair layer, evaluator, contract tests, demo, and `generate(outline)`
-signature all remain unchanged. Document the generation seed, candidate count,
-ranking method, checkpoint, and config hash for submitted outputs.
+signature all remain unchanged. To use ranked generation through the canonical
+one-argument entry point, set `FLOORGEN_GENERATION_MODE=ranked`. Document the
+generation seed, candidate count, ranking method, checkpoint, and config hash
+for submitted outputs.
 
 For the full post-training handoff, run `scripts/post_train.py`. It loads the
 checkpoint, scores validation outlines, exports generated layouts, and writes:
@@ -305,9 +331,10 @@ checkpoint, scores validation outlines, exports generated layouts, and writes:
 ## Submission Checklist
 
 - [x] `generate(outline)` contract — one positional arg, returns room records
+- [x] `generate(outline)` can use checkpoint-backed ranked mode via env vars
 - [x] Contract tests pass (`pytest -q`)
 - [x] Linter clean (`ruff check src tests`)
-- [x] Live demo (Gradio, deployable to HuggingFace Spaces)
+- [x] Local demo (Gradio, deployable to HuggingFace Spaces; no live URL committed)
 - [x] Entire/checkpoint branch pushed (`entire/checkpoints/v1`)
 - [x] Evaluation pipeline (FID, density, coverage)
 - [x] Data pipeline (preprocessing, outline construction, normalization)
@@ -315,11 +342,14 @@ checkpoint, scores validation outlines, exports generated layouts, and writes:
 - [x] Flow-model training/sampling code path
 - [x] Honest limitations documented
 - [x] Trained flow/diffusion checkpoint load path (`FLOORGEN_CHECKPOINT`)
-- [ ] Real MSD preprocessing artifacts (`data/processed/*`, reports)
-- [ ] Real trained checkpoint artifact in this checkout
-- [ ] Generated test-split outputs in MSD `geom` format
+- [x] Real MSD preprocessing artifacts regenerated locally; ignored by git
+- [x] Real trained checkpoint + checkpoint metadata available locally; ignored by git
+- [x] Limited official test-split export smoke in MSD `geom` format
+- [ ] Full 2,734-unit test-split export
 - [x] Judge-ready methodology package (`docs/submission-package.md`)
-- [x] Markdown pitch deck (`docs/pitch-deck.md`); PDF/PPTX not generated
+- [x] Artifact manifest with local hashes (`docs/artifact-manifest.md`)
+- [x] Markdown pitch deck (`docs/pitch-deck.md`)
+- [ ] Final pitch deck PDF/PPTX
 
 ---
 

@@ -54,6 +54,8 @@ geometry dataframe, not in the image or graph folders.
 | `unit_id` | Selects one apartment/dwelling. Keep `plan_id` and `floor_id` as broader context metadata. |
 | `entity_type == area` | Selects the room and space polygons for a given `unit_id`. |
 | `outline` | Built from rooms by the provided script: buffer each room out by 0.3 m, union, then buffer back in, fusing them into one exterior shell. |
+| Train/test split | Use the predefined Kaggle train/test split. Split validation only from the training split. |
+| `plan_id` | Preserve through outline-format conversion; organiser clarification says plan IDs stay the same. |
 
 ## Fixed Requirements
 
@@ -75,8 +77,8 @@ The representation may be anything except a pixel grid.
 ## Judging Criteria
 
 Solutions are scored against FID and Diversity & Coverage. In metric terms,
-this means FID, density, and coverage against a held-out set of real Swiss floor
-plans.
+this means FID, density, and coverage against the predefined Kaggle test split
+of real Swiss floor plans.
 
 To win, the generated layouts need to be both realistic and broad: low-FID
 plans that resemble real Swiss apartments, high-density samples that stay on the
@@ -85,6 +87,9 @@ layout pattern.
 
 Evaluator clarification from organisers:
 
+- **Harness:** there is no organiser-provided evaluation harness. Teams are
+  expected to evaluate themselves on FID, density, and coverage and report those
+  numbers.
 - **Density and coverage:** computed with the formulas/implementation from
   `clovaai/generative-evaluation-prdc`.
 - **FID:** computed with TorchMetrics'
@@ -93,6 +98,8 @@ Evaluator clarification from organisers:
   the official MSD repository, especially `plot.py`. The MSD script is the
   source of truth for rendering settings such as `512x512` image size, colors,
   line widths, padding, antialiasing, and whether graph details are drawn.
+- **Palette:** use the official MSD room-type color mapping. A different initial
+  script palette is acceptable only if it matches the MSD repo palette.
 - **Room types:** room labels are used in rendering, so semantic labels affect
   rendered colors and can directly affect FID.
 - **Test-time compute:** seed and sample count are not predetermined by the
@@ -124,8 +131,9 @@ be punished on coverage. A model that produces wild variety but unrealistic
 plans should score high coverage but low density. The goal is to score well on
 both.
 
-Scoring is run by the organisers on a held-out set of plans with a fixed
-reference set and rasterisation path. Teams should document their generation
+Because there is no provided harness, teams should run and report the three
+metrics themselves using the Kaggle predefined split, official MSD-style
+rasterisation, and a documented metric configuration. Document the generation
 seed, number of candidates per outline, post-processing, and ranking strategy so
 scores are interpretable and reproducible.
 
@@ -138,9 +146,11 @@ scores are interpretable and reproducible.
   experiments, but the organiser clarified that the final seed is not
   predetermined.
 - **Honest reporting:** results must be honest and reproducible.
-- **No leakage:** do not train on the test/evaluation set or otherwise leak
-  held-out data into training.
-- **Metrics:** report correct metrics.
+- **No leakage:** respect the predefined Kaggle train/test split. Create
+  validation splits only from the training data and preserve `plan_id` through
+  conversion.
+- **Metrics:** self-report FID, density, and coverage with enough renderer and
+  split detail for the numbers to be audited.
 
 ## Submission
 
