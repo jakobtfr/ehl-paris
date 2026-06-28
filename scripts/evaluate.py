@@ -252,6 +252,10 @@ def main() -> None:
     report_steps: str | int | None = provenance["steps"]
     report_threshold: str | float | None = provenance["presence_threshold"]
     report_device: str | None = provenance["device"]
+    if provenance["checkpoint"]:
+        from floorgen.posttrain import checkpoint_sha256
+
+        checkpoint_sha = checkpoint_sha256(Path(provenance["checkpoint"]))
     if args.checkpoint is not None:
         from floorgen.posttrain import checkpoint_sha256, register_checkpoint_generator
 

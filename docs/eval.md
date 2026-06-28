@@ -227,6 +227,7 @@ Distribution:
 ## Known Limitations
 
 - FID/PRDC require `torch` + `torchmetrics` (lazy import, fails gracefully)
-- Trained checkpoint (67 epochs) produces overlapping rooms rejected by repair layer
+- No real MSD-trained checkpoint is present in this checkout; checkpoint-backed
+  metrics require a local `.pt` artifact.
 - Demo outlines are simple rectangles; real MSD outlines have complex shapes
 - Render palette is approximate; swap to exact organiser values when confirmed

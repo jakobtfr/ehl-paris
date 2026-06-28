@@ -285,6 +285,40 @@ class TestExportCSV:
         assert set(df["plan_id"]) == {201}
         assert set(df["official_split"]) == {"test"}
 
+    def test_export_batch_env_checkpoint_records_sha(self, tmp_path):
+        pytest.importorskip("torch")
+        from tests.test_posttrain import write_checkpoint
+
+        checkpoint = tmp_path / "flow.pt"
+        write_checkpoint(checkpoint)
+        env = {
+            **os.environ,
+            "FLOORGEN_CHECKPOINT": str(checkpoint),
+            "FLOORGEN_SAMPLE_STEPS": "1",
+            "FLOORGEN_PRESENCE_THRESHOLD": "0.5",
+        }
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import json; "
+                    "import scripts.export_batch as eb; "
+                    "print(eb._checkpoint_notes_from_env())"
+                ),
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+        notes = json.loads(result.stdout)
+        assert notes["checkpoint_sha256"]
+        assert notes["backend"]["checkpoint"] == str(checkpoint)
+
     def test_export_batch_rejects_non_positive_sample_count(self, tmp_path):
         result = subprocess.run(
             [

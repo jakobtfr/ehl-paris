@@ -21,6 +21,23 @@ from floorgen.export import ExportConfig, export_to_csv, export_to_parquet
 from floorgen.generate import backend_provenance
 
 
+def _checkpoint_notes_from_env() -> str:
+    provenance = backend_provenance()
+    notes: dict = {"backend": provenance}
+    if provenance["checkpoint"]:
+        steps = provenance["steps"]
+        threshold = provenance["presence_threshold"]
+        if steps is not None and int(steps) <= 0:
+            raise ValueError("FLOORGEN_SAMPLE_STEPS must be positive")
+        if threshold is not None and not 0.0 <= float(threshold) <= 1.0:
+            raise ValueError("FLOORGEN_PRESENCE_THRESHOLD must be between 0 and 1")
+
+        from floorgen.posttrain import checkpoint_sha256
+
+        notes["checkpoint_sha256"] = checkpoint_sha256(Path(provenance["checkpoint"]))
+    return json.dumps(notes, sort_keys=True)
+
+
 def _load_outlines(path: Path) -> dict:
     """Load outlines from a Parquet/GeoJSON file."""
     import geopandas as gpd
@@ -91,7 +108,7 @@ def main() -> None:
         outlines = _demo_outlines() if args.demo else _load_outlines(args.outlines)
     provenance = backend_provenance()
     checkpoint = provenance["checkpoint"] or provenance["backend"] or "baseline"
-    config_notes = json.dumps({"backend": provenance}, sort_keys=True)
+    config_notes = _checkpoint_notes_from_env()
     if args.checkpoint is not None:
         from floorgen.posttrain import checkpoint_sha256, register_checkpoint_generator
 

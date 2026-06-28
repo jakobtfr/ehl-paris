@@ -213,6 +213,7 @@ class TestEvaluateCLI:
 
         report = json.loads(report_path.read_text())
         assert report["backend"]["checkpoint"] == str(checkpoint)
+        assert report["backend"]["checkpoint_sha256"]
         assert report["backend"]["sampler_steps"] == "1"
 
     def test_evaluate_real_metrics_uses_real_layouts(self, rect_outline, monkeypatch):
