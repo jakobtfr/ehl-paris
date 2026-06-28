@@ -167,3 +167,35 @@ class TestEvaluateCLI:
         report = json.loads(report_path.read_text())
         assert report["backend"]["checkpoint"] == "baseline"
         assert report["renderer"]["size"] == 512
+
+    def test_evaluate_real_metrics_uses_real_layouts(self, rect_outline, monkeypatch):
+        import scripts.evaluate as evaluate_script
+
+        real_layout = [
+            (box(0, 0, 5, 8), 0),
+            (box(5, 0, 10, 8), 2),
+        ]
+
+        def fake_image_report(real_images, fake_images, prdc_k):
+            assert real_images.shape[0] == 1
+            assert fake_images.shape[0] == 2
+            assert prdc_k == 3
+            return {
+                "status": "ok",
+                "fid": 1.0,
+                "density": 0.5,
+                "coverage": 0.25,
+            }
+
+        monkeypatch.setattr(evaluate_script, "try_image_distribution_report", fake_image_report)
+
+        report = evaluate_script.evaluate(
+            {"unit_1": rect_outline},
+            real_layouts={"unit_1": real_layout},
+            n_samples=2,
+            real_metrics=True,
+            prdc_k=3,
+        )
+
+        assert report["image_metrics"]["fid"] == 1.0
+        assert report["image_metrics"]["density"] == 0.5

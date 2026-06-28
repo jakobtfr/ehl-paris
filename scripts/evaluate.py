@@ -17,12 +17,14 @@ import time
 from pathlib import Path
 
 import numpy as np
+from shapely import wkt
 from shapely.geometry import box
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from floorgen.config import SEED
 from floorgen.eval.metrics import distribution_metrics, validity_metrics
+from floorgen.eval.realism import try_image_distribution_report
 from floorgen.eval.render import RenderConfig, render_layout
 from floorgen.generate import sample_layouts
 
@@ -47,8 +49,42 @@ def _load_outlines(path: Path) -> dict:
     return outlines
 
 
+def _load_units(
+    path: Path,
+    *,
+    split: str | None = None,
+    limit: int = 0,
+) -> tuple[dict, dict]:
+    outlines = {}
+    real_layouts = {}
+    with path.open() as f:
+        for line_no, line in enumerate(f, start=1):
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if split and record.get("split") != split:
+                continue
+            unit_id = str(record.get("unit_id", line_no))
+            outline = wkt.loads(record["outline_wkt"])
+            rooms = [
+                (wkt.loads(room["wkt"]), int(room["label_idx"]))
+                for room in record.get("rooms", [])
+            ]
+            if outline.is_empty or not rooms:
+                continue
+            outlines[unit_id] = outline
+            real_layouts[unit_id] = rooms
+            if limit and len(outlines) >= limit:
+                break
+    if not outlines:
+        detail = f" for split={split!r}" if split else ""
+        raise ValueError(f"no usable processed units found{detail} in {path}")
+    return outlines, real_layouts
+
+
 def evaluate(
     outlines: dict,
+    real_layouts: dict | None = None,
     n_samples: int = 4,
     seed: int = SEED,
     render_size: int = 512,
@@ -57,17 +93,22 @@ def evaluate(
     steps: int | None = None,
     threshold: float | None = None,
     device: str | None = None,
+    real_metrics: bool = False,
+    prdc_k: int = 5,
 ) -> dict:
     """Run full evaluation pipeline, return structured report."""
     cfg = RenderConfig(size=render_size)
     all_validity = []
     all_layouts_tuples = []
     rendered_images = []
+    real_images = []
     failures = []
 
     t0 = time.time()
 
     for unit_id, outline in outlines.items():
+        if real_metrics and real_layouts and unit_id in real_layouts:
+            real_images.append(render_layout(real_layouts[unit_id], outline, cfg=cfg))
         try:
             layouts = sample_layouts(outline, seed=seed, n_samples=n_samples)
         except Exception as exc:
@@ -106,6 +147,27 @@ def evaluate(
 
     # Distribution metrics
     dist = distribution_metrics(all_layouts_tuples) if all_layouts_tuples else {}
+    image_metrics = None
+    if real_metrics:
+        if real_images and rendered_images:
+            image_metrics = try_image_distribution_report(
+                np.stack(real_images, axis=0),
+                np.stack(rendered_images, axis=0),
+                prdc_k=prdc_k,
+            )
+        else:
+            image_metrics = {
+                "status": "blocked",
+                "error": "no paired real/generated rendered images available",
+                "n_real": len(real_images),
+                "n_generated": len(rendered_images),
+                "prdc_k": prdc_k,
+                "fid": None,
+                "precision": None,
+                "recall": None,
+                "density": None,
+                "coverage": None,
+            }
 
     report = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
@@ -133,6 +195,7 @@ def evaluate(
             k: (round(v, 4) if isinstance(v, float) else v)
             for k, v in dist.items()
         },
+        "image_metrics": image_metrics,
         "failures": failures[:10],
     }
     return report
@@ -141,6 +204,9 @@ def evaluate(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Evaluate generated floor layouts")
     parser.add_argument("--outlines", type=Path, help="Path to outline geometries")
+    parser.add_argument("--units", type=Path, help="Processed units.jsonl with real room geometry")
+    parser.add_argument("--split", default=None, help="Optional split filter for --units")
+    parser.add_argument("--limit", type=int, default=0, help="Maximum units to load from --units")
     parser.add_argument("--demo", action="store_true", help="Use demo outlines")
     parser.add_argument("--n-samples", type=int, default=4)
     parser.add_argument("--seed", type=int, default=SEED)
@@ -150,16 +216,32 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=32, help="Euler sampler steps for checkpoint")
     parser.add_argument("--threshold", type=float, default=0.5, help="Presence threshold for checkpoint")
     parser.add_argument("--device", default="cpu", help="Torch device for checkpoint inference")
+    parser.add_argument(
+        "--real-metrics",
+        action="store_true",
+        help="Compute FID and PRDC against real layouts from --units",
+    )
+    parser.add_argument("--prdc-k", type=int, default=5, help="k for PRDC density/coverage")
     args = parser.parse_args()
 
-    if not args.outlines and not args.demo:
-        parser.error("Provide --outlines <path> or --demo")
+    if not args.outlines and not args.units and not args.demo:
+        parser.error("Provide --outlines <path>, --units <units.jsonl>, or --demo")
+    if args.real_metrics and not args.units:
+        parser.error("--real-metrics requires --units")
     if args.steps <= 0:
         parser.error("--steps must be positive")
     if not 0.0 <= args.threshold <= 1.0:
         parser.error("--threshold must be between 0 and 1")
+    if args.limit < 0:
+        parser.error("--limit must be non-negative")
+    if args.prdc_k <= 0:
+        parser.error("--prdc-k must be positive")
 
-    outlines = _demo_outlines() if args.demo else _load_outlines(args.outlines)
+    real_layouts = None
+    if args.units:
+        outlines, real_layouts = _load_units(args.units, split=args.split, limit=args.limit)
+    else:
+        outlines = _demo_outlines() if args.demo else _load_outlines(args.outlines)
     checkpoint = "baseline"
     checkpoint_sha = None
     if args.checkpoint is not None:
@@ -177,6 +259,7 @@ def main() -> None:
     print(f"Evaluating {len(outlines)} outlines x {args.n_samples} samples...")
     report = evaluate(
         outlines,
+        real_layouts=real_layouts,
         n_samples=args.n_samples,
         seed=args.seed,
         render_size=args.render_size,
@@ -185,6 +268,8 @@ def main() -> None:
         steps=args.steps if args.checkpoint is not None else None,
         threshold=args.threshold if args.checkpoint is not None else None,
         device=args.device if args.checkpoint is not None else None,
+        real_metrics=args.real_metrics,
+        prdc_k=args.prdc_k,
     )
 
     print(f"\nResults ({report['elapsed_seconds']}s):")
@@ -198,6 +283,14 @@ def main() -> None:
         print("  Distribution:")
         print(f"    room_count_mean: {report['distribution'].get('room_count_mean', 'N/A')}")
         print(f"    room_count_std: {report['distribution'].get('room_count_std', 'N/A')}")
+    if report["image_metrics"]:
+        print("  Image metrics:")
+        if report["image_metrics"]["status"] == "ok":
+            print(f"    fid: {report['image_metrics']['fid']}")
+            print(f"    density: {report['image_metrics']['density']}")
+            print(f"    coverage: {report['image_metrics']['coverage']}")
+        else:
+            print(f"    blocked: {report['image_metrics']['error']}")
 
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

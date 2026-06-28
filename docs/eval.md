@@ -19,6 +19,15 @@ python scripts/evaluate.py --demo --n-samples 4
 set FLOORGEN_CHECKPOINT=path/to/checkpoint.pt
 python scripts/evaluate.py --demo --n-samples 4
 
+# Compute real-vs-generated FID/PRDC when processed units are available.
+# Requires torch/torchmetrics; if unavailable, the JSON report records the blocker.
+python scripts/evaluate.py \
+  --units data/processed/units.jsonl \
+  --split test \
+  --real-metrics \
+  --n-samples 4 \
+  --output reports/eval/test_real_metrics.json
+
 # Batch export to Parquet
 python scripts/export_batch.py --demo --format parquet
 ```
@@ -149,6 +158,21 @@ Each export writes a `_meta.json` file with:
 - Number of outlines and samples
 - Total rooms exported
 - Column schema and room label taxonomy
+- Generation failures, if `--allow-partial` was used
+
+## Real-vs-Generated Metrics
+
+`scripts/evaluate.py --units ... --real-metrics` loads processed `units.jsonl`
+records, renders the real room polygons and generated room polygons through the
+same `RenderConfig`, then attempts:
+
+- TorchMetrics FID over rendered image stacks
+- PRDC precision/recall/density/coverage over Inception features
+
+The report writes an `image_metrics` object. When the heavy dependencies or
+sample count are insufficient, the fields remain `null` and `status` is
+`blocked` with the concrete exception. This is intentional: reports should show
+metric blockers rather than invented scores.
 
 ## Environment Variables
 
