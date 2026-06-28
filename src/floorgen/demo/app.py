@@ -55,38 +55,61 @@ CSS = """
 }
 .gradio-container {
   max-width: 1440px !important;
-  background: #f6f7fb;
-  color: #172033;
+  background: #f8fafc;
+  color: #0f172a;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --body-background-fill: #f6f7fb;
-  --body-text-color: #172033;
+  --body-background-fill: #f8fafc;
+  --body-text-color: #0f172a;
   --block-background-fill: #ffffff;
-  --block-border-color: #d8dee9;
-  --block-label-background-fill: #eef4ff;
-  --block-label-text-color: #17315c;
+  --block-border-color: #e2e8f0;
+  --block-label-background-fill: #f8fafc;
+  --block-label-text-color: #334155;
   --input-background-fill: #ffffff;
   --input-background-fill-focus: #ffffff;
-  --input-border-color: #c7d0df;
-  --input-border-color-focus: #2f6fed;
-  --input-placeholder-color: #7a8698;
-  --neutral-50: #fbfcff;
-  --neutral-100: #f6f7fb;
-  --neutral-200: #e7ebf2;
-  --neutral-700: #364252;
-  --neutral-800: #172033;
-  --neutral-900: #111827;
+  --input-border-color: #cbd5e1;
+  --input-border-color-focus: #2563eb;
+  --input-placeholder-color: #64748b;
+  --neutral-50: #f8fafc;
+  --neutral-100: #f1f5f9;
+  --neutral-200: #e2e8f0;
+  --neutral-700: #334155;
+  --neutral-800: #1e293b;
+  --neutral-900: #0f172a;
 }
 #app-shell {
-  border: 1px solid #d8dee9;
+  border: 1px solid #e2e8f0;
   background: #ffffff;
   border-radius: 8px;
-  padding: 18px;
+  padding: 22px;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.07);
+}
+.workspace-grid {
+  align-items: flex-start;
 }
 .control-panel {
-  border: 1px solid #d8dee9;
-  background: #fbfcff;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
   border-radius: 8px;
-  padding: 12px;
+  padding: 14px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.control-heading {
+  border-bottom: 1px solid #e2e8f0;
+  margin: -2px 0 14px;
+  padding-bottom: 12px;
+}
+.control-heading strong {
+  color: #0f172a;
+  display: block;
+  font-size: 15px;
+  line-height: 1.25;
+}
+.control-heading span {
+  color: #475569;
+  display: block;
+  font-size: 13px;
+  line-height: 1.4;
+  margin-top: 4px;
 }
 .control-panel,
 .control-panel * {
@@ -96,101 +119,126 @@ CSS = """
 .control-panel input,
 .control-panel select {
   background: #ffffff !important;
-  color: #172033 !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
 }
 .dashboard-title h1 {
   margin: 0 0 4px;
-  font-size: 24px;
-  color: #172033 !important;
+  font-size: 26px;
+  color: #0f172a !important;
   letter-spacing: 0;
 }
 .dashboard-title p {
   margin: 0;
-  color: #536070 !important;
-  font-size: 13px;
+  color: #475569 !important;
+  font-size: 14px;
 }
-.criteria-strip {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-  margin: 12px 0;
+.dashboard-title {
+  margin-bottom: 26px;
 }
-.criteria-item {
-  border: 1px solid #d8dee9;
-  border-radius: 8px;
-  background: #fbfcff;
-  padding: 9px 10px;
-  min-height: 74px;
-}
-.criteria-item strong {
-  display: block;
-  color: #172033;
+.app-kicker {
+  color: #2563eb;
   font-size: 12px;
-  margin-bottom: 4px;
-}
-.criteria-item span {
-  display: block;
-  color: #536070;
-  font-size: 12px;
-  line-height: 1.32;
-}
-.score-strip {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 10px;
-  margin: 0 0 12px;
-}
-.metric-tile {
-  border: 1px solid #d8dee9;
-  border-left: 4px solid #2f6fed;
-  border-radius: 8px;
-  background: #ffffff;
-  padding: 10px 12px;
-  min-height: 88px;
-}
-.metric-tile.good { border-left-color: #0f9f6e; }
-.metric-tile.warn { border-left-color: #d88711; }
-.metric-tile.neutral { border-left-color: #5c6f82; }
-.metric-label {
-  color: #536070;
-  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  margin-bottom: 6px;
   text-transform: uppercase;
-  letter-spacing: .04em;
 }
-.metric-value {
-  display: block;
-  margin-top: 5px;
-  font-size: 22px;
-  font-weight: 720;
-  letter-spacing: 0;
-}
-.metric-note {
-  display: block;
-  margin-top: 4px;
-  color: #536070;
-  font-size: 12px;
-  line-height: 1.35;
-}
-.status-line {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
-  margin-top: 10px;
-}
-.status-line div {
-  border: 1px solid #d8dee9;
+.run-overview {
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
   border-radius: 8px;
-  padding: 9px 10px;
-  background: #fbfcff;
-  font-size: 12px;
-  color: #364252;
-  overflow-wrap: anywhere;
+  padding: 14px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
-.status-line strong {
+.run-overview-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.run-title {
   display: block;
-  margin-bottom: 2px;
-  color: #172033;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.25;
+}
+.run-subtitle {
+  display: block;
+  color: #475569;
+  font-size: 13px;
+  line-height: 1.45;
+  margin-top: 3px;
+}
+.status-pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 220px;
+}
+.status-pill {
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #0f172a;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-size: 12px;
+  font-weight: 650;
+  line-height: 1;
+  min-height: 28px;
+  padding: 7px 10px;
+  white-space: nowrap;
+}
+.status-pill.good {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #065f46;
+}
+.status-pill.warn {
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #9a3412;
+}
+.run-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+.kpi-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #f8fafc;
+  min-height: 96px;
+  padding: 12px;
+}
+.kpi-card strong {
+  display: block;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  margin-bottom: 7px;
+  text-transform: uppercase;
+}
+.kpi-card b {
+  display: block;
+  color: #0f172a;
+  font-size: 24px;
+  letter-spacing: 0;
+  line-height: 1.1;
+}
+.kpi-card span {
+  display: block;
+  color: #475569;
+  font-size: 12.5px;
+  line-height: 1.4;
+  margin-top: 6px;
 }
 .evidence-grid {
   display: grid;
@@ -199,7 +247,7 @@ CSS = """
   margin: 0 0 12px;
 }
 .evidence-card {
-  border: 1px solid #d8dee9;
+  border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #ffffff;
   padding: 10px 12px;
@@ -207,18 +255,18 @@ CSS = """
 }
 .evidence-card strong {
   display: block;
-  color: #172033;
+  color: #0f172a;
   font-size: 12px;
   margin-bottom: 5px;
 }
 .evidence-card span {
   display: block;
-  color: #536070;
+  color: #475569;
   font-size: 12px;
   line-height: 1.35;
 }
 .code-cmd {
-  border: 1px solid #d8dee9;
+  border: 1px solid #334155;
   border-radius: 8px;
   background: #111827;
   color: #f8fafc;
@@ -227,12 +275,66 @@ CSS = """
   white-space: pre-wrap;
   font-size: 12px;
 }
+.control-panel label,
+.control-panel span {
+  color: #0f172a !important;
+}
+.control-panel span[data-testid="block-info"],
+.control-panel .block-info,
+.control-panel label > span {
+  background: transparent !important;
+  border-radius: 0 !important;
+  color: #334155 !important;
+  font-size: 12px !important;
+  font-weight: 650 !important;
+  padding: 0 !important;
+}
+.control-panel .form,
+.control-panel .block {
+  border-radius: 8px !important;
+}
+.control-panel [role="radiogroup"] label {
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 8px !important;
+  background: #ffffff !important;
+  color: #0f172a !important;
+  min-height: 36px !important;
+}
+.control-panel [role="radiogroup"] label:has(input:checked) {
+  border-color: #2563eb !important;
+  background: #eff6ff !important;
+  box-shadow: 0 0 0 1px #2563eb inset !important;
+}
+.primary-action button {
+  min-height: 44px !important;
+  border-radius: 8px !important;
+  font-weight: 750 !important;
+  width: 100% !important;
+}
+.plot-panel {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.plot-panel img,
+.plot-panel canvas {
+  background: #ffffff !important;
+}
 @media (max-width: 1000px) {
-  .score-strip,
-  .status-line,
-  .criteria-strip,
+  .run-kpis,
   .evidence-grid {
     grid-template-columns: 1fr;
+  }
+  .run-overview-top {
+    display: block;
+  }
+  .status-pills {
+    justify-content: flex-start;
+    margin-top: 10px;
+    min-width: 0;
+  }
+  #app-shell {
+    padding: 14px;
   }
 }
 """
@@ -302,6 +404,16 @@ def _initial_model_settings() -> ModelSettings:
 
 
 INITIAL_SETTINGS = _initial_model_settings()
+
+
+def _preset_display_label(name: str) -> str:
+    try:
+        identifier = name.split()[1]
+        area = name.split("~", maxsplit=1)[1].split()[0]
+        rooms = name.rsplit(",", maxsplit=1)[1].strip().split()[0]
+        return f"Apt {identifier} - {area}m2, {rooms}r"
+    except (IndexError, ValueError):
+        return name.replace("Apartment", "Apt").replace("m\u00b2", "m2")
 
 
 def _settings_from_controls(
@@ -434,8 +546,9 @@ def _largest_polygon(geom: BaseGeometry) -> Polygon:
     raise ValueError("outline must be a Polygon or MultiPolygon")
 
 
-def _parse_outline(preset_name: str, custom_wkt: str) -> Polygon:
-    src = custom_wkt.strip() if custom_wkt.strip() else PRESETS[preset_name]
+def _parse_outline(preset_name: str, custom_wkt: str | None) -> Polygon:
+    custom = (custom_wkt or "").strip()
+    src = custom if custom else PRESETS[preset_name]
     try:
         geom = wkt.loads(src)
     except Exception as exc:
@@ -673,8 +786,6 @@ def _summary_html(
     profile_delta = _mean_profile_delta(profiles)
     mode = generation_mode_code(generation_mode)
     checkpoint_note = model_status["message"]
-    validity_class = "good" if ok_rows and pass_count == len(ok_rows) else "warn"
-    diversity_class = "good" if len(signatures) >= min(3, len(ok_rows)) else "warn"
     room_range = (
         f"{min(room_counts)}-{max(room_counts)}"
         if room_counts and min(room_counts) != max(room_counts)
@@ -682,58 +793,55 @@ def _summary_html(
     )
     metric_status = load_metric_status(REPO_ROOT / "reports")
     metric_source = Path(metric_status.source).name if metric_status.source else "not run"
+    backend_label = str(model_status["backend_label"])
+    backend_class = "good" if model_status["state"] == "loaded" else "warn"
+    checkpoint_name = (
+        Path(str(model_status.get("checkpoint_path") or "")).name
+        if model_status.get("checkpoint_path")
+        else "baseline"
+    )
+    metric_note = (
+        f"Metrics: FID {_fmt_metric(metric_status.fid)}, "
+        f"density {_fmt_metric(metric_status.density)}, "
+        f"coverage {_fmt_metric(metric_status.coverage)}"
+    )
+    mode_note = (
+        "ranked candidate selection"
+        if mode == "ranked"
+        else "raw strict repair"
+    )
 
     return f"""
-<div class="criteria-strip">
-  <div class="criteria-item">
-    <strong>FID realism</strong>
-    <span>Offline scored FID is { _fmt_metric(metric_status.fid) }; visual review uses the same room polygons.</span>
+<div class="run-overview">
+  <div class="run-overview-top">
+    <div>
+      <span class="run-title">{html.escape(backend_label)} · {html.escape(mode_note)}</span>
+      <span class="run-subtitle">{html.escape(checkpoint_note)} The generated rooms below are vector polygons; detailed provenance lives in the tabs.</span>
+    </div>
+    <div class="status-pills">
+      <span class="status-pill {backend_class}">{html.escape(checkpoint_name)}</span>
+      <span class="status-pill">{html.escape(settings.device)} · {settings.steps} steps</span>
+      <span class="status-pill">{settings.candidate_budget} candidates</span>
+      <span class="status-pill">{html.escape(metric_source)}</span>
+    </div>
   </div>
-  <div class="criteria-item">
-    <strong>Density</strong>
-    <span>PRDC density is { _fmt_metric(metric_status.density) }; live validity proxies expose geometry health.</span>
+  <div class="run-kpis">
+    <div class="kpi-card">
+      <strong>Validity</strong>
+      <b>{pass_count}/{len(ok_rows)}</b>
+      <span>Samples pass containment, overlap, gap, and invalid-geometry checks.</span>
+    </div>
+    <div class="kpi-card">
+      <strong>Diversity</strong>
+      <b>{len(signatures)}</b>
+      <span>Distinct layout signatures; area-profile delta {profile_delta:.1%}.</span>
+    </div>
+    <div class="kpi-card">
+      <strong>Geometry</strong>
+      <b>{mean_gap:.2f}%</b>
+      <span>Mean gap. Outside {mean_outside:.2f}%, overlap {mean_overlap:.2f}%, rooms {room_range}. {html.escape(metric_note)}.</span>
+    </div>
   </div>
-  <div class="criteria-item">
-    <strong>Coverage</strong>
-    <span>{len(signatures)} distinct signatures and {profile_delta:.1%} area-profile delta show non-collapsed sampling.</span>
-  </div>
-  <div class="criteria-item">
-    <strong>Vector output</strong>
-    <span>Every successful sample remains inspectable as labelled room polygons, GeoJSON, and WKT/CSV rows.</span>
-  </div>
-  <div class="criteria-item">
-    <strong>Audit trail</strong>
-    <span>Seed, checkpoint, mode, candidate budget, ranking, metric report, and export schema are recorded.</span>
-  </div>
-</div>
-<div class="score-strip">
-  <div class="metric-tile {validity_class}">
-    <span class="metric-label">Vector validity</span>
-    <span class="metric-value">{pass_count}/{len(ok_rows)}</span>
-    <span class="metric-note">Successful samples inside outline, low overlap, valid polygons.</span>
-  </div>
-  <div class="metric-tile neutral">
-    <span class="metric-label">Density proxy</span>
-    <span class="metric-value">{mean_gap:.2f}%</span>
-    <span class="metric-note">Gap mean; outside {mean_outside:.2f}%, overlap {mean_overlap:.2f}%.</span>
-  </div>
-  <div class="metric-tile {diversity_class}">
-    <span class="metric-label">Coverage proxy</span>
-    <span class="metric-value">{len(signatures)}</span>
-    <span class="metric-note">Distinct layout signatures; area-profile delta {profile_delta:.1%}.</span>
-  </div>
-  <div class="metric-tile neutral">
-    <span class="metric-label">Room count range</span>
-    <span class="metric-value">{room_range}</span>
-    <span class="metric-note">Semantic labels use the MSD room taxonomy.</span>
-  </div>
-</div>
-<div class="status-line">
-  <div><strong>Backend</strong>{html.escape(str(model_status["backend_label"]))}<br>{html.escape(str(model_status["backend_path"]))}</div>
-  <div><strong>Checkpoint</strong>{html.escape(str(checkpoint_note))}</div>
-  <div><strong>Mode</strong>{html.escape(generation_mode)}<br>{html.escape(_postprocess_status(mode, settings.candidate_budget))}</div>
-  <div><strong>Runtime</strong>device={html.escape(settings.device)}<br>steps={settings.steps}, threshold={settings.threshold:g}</div>
-  <div><strong>Evidence</strong>candidate budget={settings.candidate_budget}<br>metric report={html.escape(metric_source)}</div>
 </div>
 """
 
@@ -1209,6 +1317,7 @@ def generate_showcase(
 
 def build_demo() -> gr.Blocks:
     preset_names = list(PRESETS)
+    preset_choices = [(_preset_display_label(name), name) for name in preset_names]
     theme = gr.themes.Soft(primary_hue="blue", neutral_hue="slate")
     with gr.Blocks(
         title="floorgen - Davis AI interior layout generator",
@@ -1219,24 +1328,28 @@ def build_demo() -> gr.Blocks:
             gr.HTML(
                 """
                 <div class="dashboard-title">
-                  <h1>floorgen judge dashboard</h1>
-                  <p>Davis AI outline-conditioned vector room generation with checkpoint status, ranked post-processing, exports, and provenance.</p>
+                  <div class="app-kicker">Davis AI / TUM.ai Hackathon</div>
+                  <h1>floorgen</h1>
+                  <p>Outline-conditioned vector room generation with ranked checkpoint evidence.</p>
                 </div>
                 """
             )
-            with gr.Row():
+            with gr.Row(elem_classes=["workspace-grid"]):
                 with gr.Column(scale=1, elem_classes=["control-panel"]):
+                    gr.HTML(
+                        """
+                        <div class="control-heading">
+                          <strong>Generate a judge-ready layout</strong>
+                          <span>Start with a preset outline; tune only if you need a deeper inspection.</span>
+                        </div>
+                        """
+                    )
                     preset = gr.Dropdown(
-                        choices=preset_names,
+                        choices=preset_choices,
                         value=preset_names[0],
                         label="MSD outline preset",
                     )
-                    custom = gr.Textbox(
-                        label="Custom outline WKT",
-                        placeholder="POLYGON ((0 0, 10 0, 10 8, 0 8, 0 0))",
-                        lines=3,
-                    )
-                    showcase_mode = gr.Radio(
+                    showcase_mode = gr.Dropdown(
                         choices=[
                             "Same outline diversity",
                             "Near-twin input sensitivity",
@@ -1246,23 +1359,32 @@ def build_demo() -> gr.Blocks:
                         value="Same outline diversity",
                         label="Showcase",
                     )
-                    generation_mode = gr.Radio(
-                        choices=[
-                            "Raw samples",
-                            "Ranked/post-processed",
-                        ],
-                        value="Ranked/post-processed",
-                        label="Generation mode",
-                    )
-                    n_samples = gr.Slider(1, 6, value=3, step=1, label="Samples")
-                    seed = gr.Number(value=SEED, label="Seed", precision=0)
-                    candidate_budget = gr.Slider(
-                        1,
-                        32,
-                        value=INITIAL_SETTINGS.candidate_budget,
-                        step=1,
-                        label="Candidate budget",
-                    )
+                    go = gr.Button("Generate layouts", variant="primary", elem_classes=["primary-action"])
+
+                    with gr.Accordion("Run tuning", open=False):
+                        generation_mode = gr.Dropdown(
+                            choices=[
+                                "Raw samples",
+                                "Ranked/post-processed",
+                            ],
+                            value="Ranked/post-processed",
+                            label="Generation mode",
+                        )
+                        n_samples = gr.Slider(1, 6, value=3, step=1, label="Samples")
+                        seed = gr.Number(value=SEED, label="Seed", precision=0)
+                        candidate_budget = gr.Slider(
+                            1,
+                            32,
+                            value=INITIAL_SETTINGS.candidate_budget,
+                            step=1,
+                            label="Candidate budget",
+                        )
+                    with gr.Accordion("Custom outline", open=False):
+                        custom = gr.Textbox(
+                            label="WKT polygon",
+                            placeholder="POLYGON ((0 0, 10 0, 10 8, 0 8, 0 0))",
+                            lines=3,
+                        )
                     with gr.Accordion("Advanced model settings", open=False):
                         checkpoint_path = gr.Textbox(
                             value=INITIAL_SETTINGS.checkpoint_path,
@@ -1289,32 +1411,25 @@ def build_demo() -> gr.Blocks:
                             step=0.05,
                             label="FLOORGEN_PRESENCE_THRESHOLD",
                         )
-                    go = gr.Button("Generate", variant="primary")
 
                 with gr.Column(scale=3):
-                    summary = gr.HTML(label="Judge summary")
-                    plot = gr.Plot(label="Layout showcase")
+                    summary = gr.HTML(label="Judge summary", show_label=False)
+                    plot = gr.Plot(label="Layout showcase", show_label=False, elem_classes=["plot-panel"])
 
             with gr.Tabs():
-                with gr.Tab("Validity"):
+                with gr.Tab("Checks"):
                     table = gr.Dataframe(
-                        label="Per-sample geometry and diversity evidence",
+                        label="Geometry and diversity checks",
                         interactive=False,
                         wrap=True,
                     )
-                with gr.Tab("Ranking Provenance"):
                     ranking_summary = gr.HTML(label="Ranked post-processing summary")
                     ranking_table = gr.Dataframe(
                         label="Candidate repair, scoring, and selection data",
                         interactive=False,
                         wrap=True,
                     )
-                    ranking_json = gr.Code(
-                        label="Full ranking provenance",
-                        language="json",
-                        lines=18,
-                    )
-                with gr.Tab("Vector Export"):
+                with gr.Tab("Export"):
                     geojson = gr.Code(
                         label="First successful sample (GeoJSON FeatureCollection)",
                         language="json",
@@ -1329,19 +1444,21 @@ def build_demo() -> gr.Blocks:
                         geojson_download = gr.File(label="GeoJSON download")
                         csv_download = gr.File(label="CSV download")
                         provenance_download = gr.File(label="Provenance download")
-                with gr.Tab("Run Provenance"):
+                with gr.Tab("Provenance"):
+                    metrics = gr.HTML(label="Metric/report status")
                     provenance = gr.Code(
                         label="Generation metadata",
                         language="json",
                         lines=20,
                     )
-                with gr.Tab("Model"):
+                    ranking_json = gr.Code(
+                        label="Full ranking provenance",
+                        language="json",
+                        lines=18,
+                    )
+                with gr.Tab("Notes"):
                     gr.Markdown(MODEL_MARKDOWN)
-                with gr.Tab("Metrics"):
-                    metrics = gr.HTML(label="Metric/report status")
-                with gr.Tab("Pitch Flow"):
                     gr.Markdown(PITCH_MARKDOWN)
-                with gr.Tab("Limitations"):
                     gr.Markdown(LIMITATIONS_MARKDOWN)
 
         inputs = [
