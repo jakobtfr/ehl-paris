@@ -13,7 +13,7 @@ from shapely.geometry.base import BaseGeometry
 from ..config import MAX_ROOMS_K, ROOM_NAMES
 from ..repr.mrr import RoomMRR
 from .geometry import decode_mrr_slots, outline_conditioning_from_geometry
-from .network import RoomFlowModel
+from .network import RoomFlowModel, RoomFlowTransformer
 
 
 @dataclass(frozen=True)
@@ -97,14 +97,28 @@ def load_generator(
 ) -> Callable[[BaseGeometry, np.random.Generator], list[RoomMRR]]:
     """Load a checkpoint as a `floorgen.generate.GENERATOR`-compatible callable."""
 
-    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint = torch.load(checkpoint_path, map_location=device, weights_only=False)
     config = checkpoint.get("config", {})
-    model = RoomFlowModel(
-        num_types=int(config.get("num_types", len(ROOM_NAMES))),
-        k=int(config.get("k", MAX_ROOMS_K)),
-        d_model=int(config.get("d_model", 128)),
-        boundary_points=int(config.get("boundary_points", 128)),
-    )
+    architecture = config.get("architecture", "mlp")
+
+    if architecture == "transformer":
+        model = RoomFlowTransformer(
+            num_types=int(config.get("num_types", len(ROOM_NAMES))),
+            k=int(config.get("k", MAX_ROOMS_K)),
+            d_model=int(config.get("d_model", 512)),
+            boundary_points=int(config.get("boundary_points", 128)),
+            num_layers=int(config.get("num_layers", 4)),
+            nhead=int(config.get("nhead", 8)),
+            dim_feedforward=int(config.get("dim_feedforward", 2048)),
+            dropout=float(config.get("dropout", 0.0)),
+        )
+    else:
+        model = RoomFlowModel(
+            num_types=int(config.get("num_types", len(ROOM_NAMES))),
+            k=int(config.get("k", MAX_ROOMS_K)),
+            d_model=int(config.get("d_model", 128)),
+            boundary_points=int(config.get("boundary_points", 128)),
+        )
     model.load_state_dict(checkpoint["state_dict"])
     model.to(device)
     model.eval()
