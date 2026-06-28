@@ -19,8 +19,8 @@ Dwellings).
 | Diffusion/flow-matching model | Training path implemented | `src/floorgen/model/*` + `scripts/train_flow.py`; baseline fallback remains active until a checkpoint is registered |
 | MRR room representation (cx, cy, w, h, angle, type) | Done | `src/floorgen/repr/mrr.py` |
 | Deterministic validity-repair layer | Done | Clips to outline, resolves overlaps, fills slivers |
-| FID evaluation (TorchMetrics) | Done | `src/floorgen/eval/metrics.py::compute_fid` |
-| Density & Coverage (PRDC) | Done | `src/floorgen/eval/prdc.py` (vendored clovaai) |
+| FID evaluation (TorchMetrics) | Implemented | `scripts/evaluate.py --units ... --real-metrics`; reports concrete blockers if deps/data are unavailable |
+| Density & Coverage (PRDC) | Implemented | `src/floorgen/eval/prdc.py` + rendered real-vs-generated image report |
 | MSD-parity rasteriser | Done | `src/floorgen/eval/render.py` |
 | Data preprocessing pipeline | Done | `src/floorgen/data/preprocess.py` — CSV → per-unit records |
 | Oracle reconstruction gate | Done | `src/floorgen/repr/oracle_gate.py` — MRR fidelity go/no-go |
@@ -85,13 +85,14 @@ src/floorgen/
     data.py            processed JSONL → fixed-slot model tensors
     geometry.py        outline conditioning + MRR tensor encode/decode
     matching.py        Hungarian room-slot matching
-    network.py         conditional fixed-slot room flow network
+    network.py         MLP + transformer fixed-slot room flow networks
     losses.py          flow, presence, and room-type training losses
     sampler.py         Euler sampler + checkpoint loader for GENERATOR
   eval/
     render.py          MSD-parity rasteriser (torch-free)
     prdc.py            density/coverage (vendored clovaai PRDC, numpy-only)
     metrics.py         validity + distribution + FID metrics
+    realism.py         real-vs-generated FID/PRDC report helper
   demo/
     app.py             Gradio demo UI
     presets.json       real MSD apartment outlines for the demo
@@ -100,7 +101,7 @@ scripts/
   post_train.py        checkpoint → score → export → report pipeline
   smoke_test.py        standalone pipeline smoke test (no deps beyond core)
   evaluate.py          full evaluation CLI (generate → validate → render → metrics)
-  export_batch.py      batch export generated layouts to Parquet/CSV
+  export_batch.py      batch export generated layouts to Parquet/CSV, optional checkpoint
 tests/
   test_contract.py     contract tests (generate() guarantees)
   test_repr.py         MRR round-trip tests
@@ -183,6 +184,14 @@ uv run --extra train python scripts/post_train.py \
   --output-dir reports/post_train \
   --split test --n-samples 4 --steps 32 --threshold 0.5
 
+# 5b. Real-vs-generated rendered FID/PRDC report, when processed units exist.
+uv run --extra train python scripts/evaluate.py \
+  --units data/processed/units.jsonl \
+  --split test \
+  --real-metrics \
+  --n-samples 4 \
+  --output reports/eval/test_real_metrics.json
+
 # 6. Use a trained checkpoint through generate()
 FLOORGEN_CHECKPOINT=checkpoints/flow-smoke.pt \
 uv run --extra train python -B -c "from shapely.geometry import box; from floorgen.generate import generate; print(len(generate(box(0,0,10,8))), 'rooms')"
@@ -208,10 +217,10 @@ uv run python app.py
 4. **Generate** — the app calls `sample_layouts()` and renders coloured room polygons.
 5. **Inspect** the GeoJSON output panel for machine-readable room geometry.
 
-The demo always uses whatever backend is wired into `GENERATOR`. Today this is
-the heuristic baseline unless a checkpoint-backed sampler is registered; once a
-trained flow checkpoint is wired in, the demo upgrades automatically with no UI
-changes.
+The demo always uses whatever backend is wired into `GENERATOR`. It shows
+backend provenance in the UI and records it in the GeoJSON output: baseline,
+custom registered generator, or `FLOORGEN_CHECKPOINT` with device, steps, and
+presence threshold.
 
 ---
 
@@ -221,14 +230,18 @@ changes.
   space-partitioning baseline (`baseline.py`). This satisfies the `generate()`
   contract and produces valid geometry, but does **not** constitute the scored
   diffusion/flow model unless replaced by a loaded checkpoint sampler.
-- **Training code exists; trained weights are not committed.** The fixed-slot
-  conditional flow model, loss, sampler, and training script are implemented,
-  but no real MSD-trained checkpoint is present in this checkout.
+- **Training code exists; trained weights are not committed in this checkout.**
+  The fixed-slot MLP and transformer flow models, losses, sampler, and training
+  script are implemented. A local checkpoint path can be loaded via
+  `FLOORGEN_CHECKPOINT` or CLI `--checkpoint`, but this repository currently
+  does not include a real MSD-trained `.pt` file.
 - **MRR compression.** Minimum rotated rectangles cannot perfectly represent
   L-shaped or irregular rooms. The oracle gate quantifies this; corner-sequence
   tokens are a documented stretch goal.
-- **Evaluation requires torch.** FID and PRDC run only with `--extra train`
-  installed (GPU box). Geometry-validity metrics are always available.
+- **Image metrics require torch.** FID and PRDC run only with `--extra train`
+  installed. If dependencies, real processed units, or sample count are
+  insufficient, `scripts/evaluate.py --real-metrics` writes an explicit
+  `image_metrics.status = "blocked"` instead of fabricating scores.
 - **MSD CSV not included.** The dataset is ~370k rows and is sourced from
   Kaggle. Point `MSD_CSV_PATH` to your local copy.
 
@@ -278,9 +291,10 @@ checkpoint, scores validation outlines, exports generated layouts, and writes:
 - [x] Honest limitations documented
 - [ ] Trained flow/diffusion model registered as `GENERATOR`
 - [ ] Real MSD preprocessing artifacts (`data/processed/*`, reports)
-- [ ] Real trained checkpoint + checkpoint metadata
+- [ ] Real trained checkpoint + checkpoint metadata in this checkout
 - [ ] Generated test-split outputs in MSD `geom` format
-- [ ] Pitch deck
+- [x] Judge-ready methodology package (`docs/submission-package.md`)
+- [ ] Final pitch deck PDF/PPTX
 
 ---
 

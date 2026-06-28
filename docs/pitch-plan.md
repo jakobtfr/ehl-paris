@@ -192,9 +192,9 @@ Use these only if they are current at presentation time:
 | Local smoke validity | 0.0000 outside / overlap / gap / invalid on rectangle smoke |
 | Test suite | pytest passed with one skipped test |
 | Lint | Ruff passed |
-| Final model metrics | Fill with validation FID, density, coverage after checkpoint run |
-| Final geometry health | Fill with perfect partition rate and mean outside/overlap/gap |
-| Test-time compute | Fill with candidates per outline, seed range, and ranking policy |
+| Final model metrics | Pending until checkpoint + processed units are available for `--real-metrics` |
+| Final geometry health | Pending final checkpoint/export run; baseline smoke is not the scored result |
+| Test-time compute | Pending final export config: candidates per outline, seed range, ranking policy |
 
 ## Demo Script
 
