@@ -254,12 +254,12 @@ missing-checkpoint, and checkpoint-load-error states explicitly.
   space-partitioning baseline (`baseline.py`). This satisfies the `generate()`
   contract and produces valid geometry, but does **not** constitute the scored
   diffusion/flow model unless replaced by a loaded checkpoint sampler.
-- **AMD-trained checkpoint is available, but raw samples remain imperfect.**
-  The primary checkpoint is `checkpoints/flow-transformer-amd-862d422.pt`.
-  Raw strict repair still rejects many checkpoint samples because generated
-  slots overlap too much. Ranked mode is documented test-time compute: it
-  samples multiple candidates, applies repair-aware scoring, and selects
-  diverse valid layouts.
+- **Checkpoint provenance is documented, but weights are not committed here.**
+  Training handoff docs reference `checkpoints/flow-transformer-amd-862d422.pt`
+  as the primary checkpoint path once artifacts are copied into `checkpoints/`.
+  Raw strict repair may reject checkpoint samples when generated slots overlap
+  too much. Ranked mode is documented test-time compute: it samples multiple
+  candidates, applies repair-aware scoring, and selects diverse valid layouts.
 - **MRR compression.** Minimum rotated rectangles cannot perfectly represent
   L-shaped or irregular rooms. The oracle gate quantifies this; corner-sequence
   tokens are a documented stretch goal.
@@ -316,10 +316,10 @@ checkpoint, scores validation outlines, exports generated layouts, and writes:
 - [x] Honest limitations documented
 - [x] Trained flow/diffusion checkpoint load path (`FLOORGEN_CHECKPOINT`)
 - [ ] Real MSD preprocessing artifacts (`data/processed/*`, reports)
-- [x] Real trained checkpoint + checkpoint metadata in this checkout
+- [ ] Real trained checkpoint artifact in this checkout
 - [ ] Generated test-split outputs in MSD `geom` format
 - [x] Judge-ready methodology package (`docs/submission-package.md`)
-- [ ] Final pitch deck PDF/PPTX
+- [x] Markdown pitch deck (`docs/pitch-deck.md`); PDF/PPTX not generated
 
 ---
 
