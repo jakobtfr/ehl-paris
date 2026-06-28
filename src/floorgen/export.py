@@ -37,6 +37,8 @@ class ExportConfig:
     n_samples: int = 4
     seed: int = SEED
     checkpoint: str = "baseline"
+    mode: str = "raw"
+    candidate_budget: int | None = None
     config_notes: str = ""
     include_validity: bool = True
     fail_on_error: bool = True
@@ -110,7 +112,11 @@ def export_layouts(
         outline, metadata = _outline_and_metadata(entry)
         try:
             layouts = sample_layouts(
-                outline, seed=cfg.seed, n_samples=cfg.n_samples, mode="raw"
+                outline,
+                seed=cfg.seed,
+                n_samples=cfg.n_samples,
+                mode=cfg.mode,
+                candidate_budget=cfg.candidate_budget,
             )
         except Exception as exc:
             failures.append((unit_id, str(exc)))
@@ -160,6 +166,8 @@ def export_to_parquet(
         "n_samples_per_outline": cfg.n_samples,
         "seed": cfg.seed,
         "checkpoint": cfg.checkpoint,
+        "mode": cfg.mode,
+        "candidate_budget": cfg.candidate_budget,
         "config_notes": cfg.config_notes,
         "total_rooms_exported": len(df),
         "columns": list(df.columns),
@@ -192,6 +200,8 @@ def export_to_csv(
         "n_samples_per_outline": cfg.n_samples,
         "seed": cfg.seed,
         "checkpoint": cfg.checkpoint,
+        "mode": cfg.mode,
+        "candidate_budget": cfg.candidate_budget,
         "config_notes": cfg.config_notes,
         "total_rooms_exported": len(df),
         "columns": list(df.columns),

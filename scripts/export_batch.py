@@ -76,6 +76,8 @@ def main() -> None:
     parser.add_argument("--steps", type=int, default=32, help="Euler sampler steps for checkpoint")
     parser.add_argument("--threshold", type=float, default=0.5, help="Presence threshold for checkpoint")
     parser.add_argument("--device", default="cpu", help="Torch device for checkpoint inference")
+    parser.add_argument("--mode", choices=["raw", "ranked"], default="raw")
+    parser.add_argument("--candidate-budget", type=int, default=None)
     parser.add_argument(
         "--allow-partial",
         action="store_true",
@@ -95,6 +97,8 @@ def main() -> None:
         parser.error("--steps must be positive")
     if not 0.0 <= args.threshold <= 1.0:
         parser.error("--threshold must be between 0 and 1")
+    if args.candidate_budget is not None and args.candidate_budget <= 0:
+        parser.error("--candidate-budget must be positive")
 
     if args.units:
         from floorgen.posttrain import load_outline_records_from_units
@@ -134,6 +138,8 @@ def main() -> None:
         n_samples=args.n_samples,
         seed=args.seed,
         checkpoint=checkpoint,
+        mode=args.mode,
+        candidate_budget=args.candidate_budget,
         config_notes=config_notes,
         fail_on_error=not args.allow_partial,
     )
@@ -143,6 +149,8 @@ def main() -> None:
             n_samples=args.n_samples,
             seed=args.seed,
             checkpoint=checkpoint,
+            mode=args.mode,
+            candidate_budget=args.candidate_budget,
             config_notes=config_notes,
             fail_on_error=not args.allow_partial,
         )
@@ -154,6 +162,7 @@ def main() -> None:
 
     print(f"Exported to: {out}")
     print(f"Outlines processed: {len(outlines)}")
+    print(f"Mode: {args.mode}; checkpoint: {checkpoint}")
 
 
 if __name__ == "__main__":

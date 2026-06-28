@@ -208,22 +208,43 @@ uv run python scripts/smoke_test.py
 
 # 9. Launch Gradio demo
 uv run --extra demo python app.py
+
+# 10. Launch checkpoint-backed judge dashboard
+FLOORGEN_CHECKPOINT=checkpoints/flow-transformer-amd-862d422.pt \
+FLOORGEN_DEVICE=cpu \
+FLOORGEN_SAMPLE_STEPS=4 \
+FLOORGEN_CANDIDATE_BUDGET=4 \
+uv run --with gradio --extra train python app.py
 ```
 
 ---
 
 ## Demo Flow
 
-1. **Launch** the Gradio app: `uv run python app.py` (or deploy to HuggingFace Spaces).
+1. **Launch** the Gradio app: `uv run --with gradio python app.py` for the
+   labelled baseline fallback, or use the checkpoint-backed command above for
+   the trained Transformer demo.
 2. **Select** a preset outline (real MSD apartments of varying size) or paste custom WKT.
-3. **Choose** number of samples (1–6) and seed.
-4. **Generate** — the app calls `sample_layouts()` and renders coloured room polygons.
-5. **Inspect** the GeoJSON output panel for machine-readable room geometry.
+3. **Choose** same-outline diversity, near-twin input sensitivity, raw-vs-ranked
+   comparison, or single-sample inspection.
+4. **Choose** raw samples or ranked/post-processed mode. Ranked mode passes the
+   candidate budget into `sample_layouts(..., mode="ranked")` and records
+   `floorgen.generate.LAST_RANKING_PROVENANCE`.
+5. **Generate** 1-6 samples with a fixed seed; the app renders the vector room
+   polygons and never uses a demo-only generation path.
+6. **Read** the judge summary strip, which maps live evidence to FID realism,
+   density, coverage, vector-output, audit trail, checkpoint, device, steps,
+   threshold, candidate budget, and local report status.
+7. **Inspect** Validity, Ranking Provenance, Vector Export, Run Provenance,
+   Model, Metrics, Pitch Flow, and Limitations tabs. Vector export includes
+   GeoJSON plus WKT/CSV rows and downloadable GeoJSON/CSV/provenance files.
 
-The demo always uses whatever backend is wired into `GENERATOR`. It shows
-backend provenance in the UI and records it in the GeoJSON output: baseline,
-custom registered generator, or `FLOORGEN_CHECKPOINT` with device, steps, and
-presence threshold.
+The demo always uses whatever backend is wired into `GENERATOR`. By default this
+is the heuristic baseline unless a checkpoint-backed sampler is registered. For a
+local checkpoint-backed demo, set
+`FLOORGEN_CHECKPOINT=checkpoints/flow-transformer-amd-862d422.pt` before launch.
+The UI shows baseline fallback, flow checkpoint sampler, custom generator,
+missing-checkpoint, and checkpoint-load-error states explicitly.
 
 ---
 
@@ -233,11 +254,12 @@ presence threshold.
   space-partitioning baseline (`baseline.py`). This satisfies the `generate()`
   contract and produces valid geometry, but does **not** constitute the scored
   diffusion/flow model unless replaced by a loaded checkpoint sampler.
-- **Training code exists; trained weights are not committed in this checkout.**
-  The fixed-slot MLP and transformer flow models, losses, sampler, and training
-  script are implemented. A local checkpoint path can be loaded via
-  `FLOORGEN_CHECKPOINT` or CLI `--checkpoint`, but this repository currently
-  does not include a real MSD-trained `.pt` file.
+- **AMD-trained checkpoint is available, but raw samples remain imperfect.**
+  The primary checkpoint is `checkpoints/flow-transformer-amd-862d422.pt`.
+  Raw strict repair still rejects many checkpoint samples because generated
+  slots overlap too much. Ranked mode is documented test-time compute: it
+  samples multiple candidates, applies repair-aware scoring, and selects
+  diverse valid layouts.
 - **MRR compression.** Minimum rotated rectangles cannot perfectly represent
   L-shaped or irregular rooms. The oracle gate quantifies this; corner-sequence
   tokens are a documented stretch goal.
@@ -292,9 +314,9 @@ checkpoint, scores validation outlines, exports generated layouts, and writes:
 - [x] MRR representation with oracle validation gate
 - [x] Flow-model training/sampling code path
 - [x] Honest limitations documented
-- [ ] Trained flow/diffusion model registered as `GENERATOR`
+- [x] Trained flow/diffusion checkpoint load path (`FLOORGEN_CHECKPOINT`)
 - [ ] Real MSD preprocessing artifacts (`data/processed/*`, reports)
-- [ ] Real trained checkpoint + checkpoint metadata in this checkout
+- [x] Real trained checkpoint + checkpoint metadata in this checkout
 - [ ] Generated test-split outputs in MSD `geom` format
 - [x] Judge-ready methodology package (`docs/submission-package.md`)
 - [ ] Final pitch deck PDF/PPTX
